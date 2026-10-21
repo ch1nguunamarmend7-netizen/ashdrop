@@ -9,8 +9,10 @@ export const SITE = {
   country: 'Mongolia',              // where that person or company is based; its law governs the Terms
   contactEmail: 'helloashdrop.cc@gmail.com', // general questions, privacy requests, security reports
   abuseEmail: 'helloashdrop.cc@gmail.com',  // reports of links that break the Terms
+  sourceUrl: 'https://github.com/ch1nguunamarmend7-netizen/ashdrop', // public GitHub repo, e.g. 'https://github.com/yourname/ashdrop'; shown in the footer once set
+  license: 'MIT',
   minAge: 16,
-  updated: '2026-10-19',            // change whenever you edit the Terms or Privacy text
+  updated: '2026-10-21',            // change whenever you edit the Terms or Privacy text
 };
 
 export const LEGAL_IS_DRAFT = !SITE.operator || !SITE.country;

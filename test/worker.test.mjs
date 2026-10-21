@@ -161,3 +161,14 @@ test('rate limits answer 429 when the limiter says no', async () => {
   const r = await call(env, '/api/p/abcdefghjk/open', { method: 'POST', body: '{}' });
   assert.equal(r.status, 429);
 });
+
+test('security.txt is served with a contact and a future expiry', async () => {
+  const env = makeEnv();
+  const r = await call(env, '/.well-known/security.txt');
+  assert.equal(r.status, 200);
+  const t = await r.text();
+  assert.match(t, /^Contact: mailto:/m);
+  const exp = Date.parse(t.match(/^Expires: (.+)$/m)[1]);
+  assert.ok(exp > Date.now() + 90 * 864e5 && exp < Date.now() + 366 * 864e5);
+  assert.match(t, /^Policy: https:\/\/ashdrop\.test\/security$/m);
+});

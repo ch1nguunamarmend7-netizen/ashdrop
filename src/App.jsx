@@ -1315,7 +1315,7 @@ function WhyIcon({ kind, c }) {
 
 function WhyAshdrop({ onShare }) {
   const reasons = [
-    ['lock', POP.ember, 'We cannot look', 'Your browser locks everything before it leaves your device, and the key never reaches us. There is no "trust us" step.'],
+    ['lock', POP.ember, 'We cannot look', 'Your browser locks everything before it leaves your device, and the key never reaches us. The code is open source, so anyone can check.'],
     ['flame', POP.gold, 'Nothing lingers', 'A burn link is deleted from our servers the moment it is opened. No inbox copies, no chat history, no forgotten attachment.'],
     ['shield', POP.cyan, 'A leaked link is not enough', 'Add a password and anyone guessing gets a few tries before the link destroys itself. Even the free tier gets this.'],
     ['user', POP.violet, 'No accounts to send or open', 'Paste, lock, send. Your recipient clicks and reads. Nobody signs up for anything to share one secret.'],
@@ -1974,7 +1974,7 @@ const FORMATS = [
   { id: 'Markdown', ext: '.md', sub: 'Formatted notes' },
   { id: 'JSON', ext: '.json', sub: 'Data, configs' },
   { id: 'YAML', ext: '.yml', sub: 'Configs' },
-  { id: 'Bash', ext: '.sh', sub: 'Shell, .env files' },
+  { id: 'Bash', ext: '.sh', sub: 'Shell scripts' },
   { id: 'JavaScript', ext: '.js', sub: 'Code' },
   { id: 'TypeScript', ext: '.ts', sub: 'Code' },
   { id: 'Python', ext: '.py', sub: 'Code' },
@@ -2319,8 +2319,8 @@ function App() {
             {/* STEP 1: type */}
             {step === 'type' && (
               <div key="s1" className="stagger grid sm:grid-cols-2 gap-4">
-                <ChoiceCard id="choose-paste" title="Text or code" sub="Notes, snippets, passwords, config files."
-                  examples={['.env', 'API key', 'SQL', 'notes']} onClick={() => choose('paste')} i={0}
+                <ChoiceCard id="choose-paste" title="Text or code" sub="A message, a login, private notes or a code snippet."
+                  examples={['Wi-Fi password', 'a login', 'private notes', 'code']} onClick={() => choose('paste')} i={0}
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" strokeWidth="1.7"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
                 <ChoiceCard id="choose-file" title="A file" sub="Documents, images, archives. Up to 25 MB."
                   examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1}

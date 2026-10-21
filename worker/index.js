@@ -39,7 +39,9 @@ export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
     let res;
-    if (url.pathname.startsWith('/api/')) {
+    if (url.pathname === '/.well-known/security.txt') {
+    res = new Response(securityTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
+  } else if (url.pathname.startsWith('/api/')) {
       try {
         res = await handleApi(request, env, url);
       } catch (err) {
@@ -59,6 +61,20 @@ export default {
     return res;
   },
 };
+
+// RFC 9116 security.txt: where to report vulnerabilities. Expires is kept six months ahead.
+const SECURITY_CONTACT = 'mailto:helloashdrop.cc@gmail.com';
+function securityTxt(origin) {
+  const expires = new Date(Date.now() + 182 * 864e5).toISOString().replace(/\.\d{3}Z$/, 'Z');
+  return [
+    `Contact: ${SECURITY_CONTACT}`,
+    `Expires: ${expires}`,
+    'Preferred-Languages: en, mn',
+    `Canonical: ${origin}/.well-known/security.txt`,
+    `Policy: ${origin}/security`,
+    '',
+  ].join('\n');
+}
 
 // Link previews (chat apps, social sites) need absolute URLs, and a secret link should preview
 // as "someone sent you a secret" without revealing anything. Previews never see the key:

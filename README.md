@@ -3,6 +3,11 @@
 Share secrets that burn after reading. Everything is encrypted in the browser with AES-256-GCM;
 the key travels in the link's `#fragment`, which browsers never send to a server.
 
+**Live:** https://ashdrop.cc · **Code:** https://github.com/ch1nguunamarmend7-netizen/ashdrop · **License:** MIT · **Security reports:** see [SECURITY.md](SECURITY.md)
+
+Ashdrop is open source so anyone can check that it does what it says. It is new and has not been
+independently audited yet; reviews and reports are very welcome.
+
 This repo is one Cloudflare Worker that serves the website **and** the API:
 
 ```
@@ -11,7 +16,7 @@ index.html, src/        React + Tailwind frontend (Vite)
   src/lib/api.js        talks to /api/p
   src/lib/linkStore.js  My links on the sender's device, encrypted with a passcode
   src/Legal.jsx         Terms, Privacy, Contact pages and the footer
-  src/site.js           operator name, country and emails used on those pages
+  src/site.js           operator name, country, emails and the source-code link used on those pages
   src/main.jsx          routes /p/:id, /terms, /privacy, /contact; everything else to the app
 worker/index.js         API routes, security headers, serves dist/
 worker/link.js          one Durable Object per link: attempt counter, burn, expiry
@@ -118,11 +123,10 @@ attempts per IP per minute, plus Workers Logs. Change the numbers there if real 
 
 ## Launch checklist
 
-- [ ] `src/site.js`: fill in `operator` (your name or company) and `country`. The Terms and
-      Privacy pages show a "Draft" notice until both are set.
+- [x] `src/site.js`: `operator` and `country` are filled in.
+- [x] Source code published at https://github.com/ch1nguunamarmend7-netizen/ashdrop
 - [ ] Have the Terms and Privacy text reviewed by someone qualified for your country.
-- [ ] Create the email addresses in `src/site.js` (Cloudflare Email Routing can forward
-      `hello@` and `abuse@ashdrop.cc` to your inbox for free).
+- [ ] Check the contact email in `src/site.js` is right and that you can receive mail there.
 - [ ] `npx wrangler secret put ADMIN_TOKEN`
 - [ ] `npm audit`, update what it flags, then `npm test` and `npm run dev:worker` again.
 - [ ] `npm run deploy`, add the custom domain, and test from two phones on the real address.
@@ -148,3 +152,9 @@ browser:  POST /api/p  body=ciphertext  meta={iv, salt, iv2, authToken, expiry, 
 worker:   R2.put(p/<id>), Durable Object stores sha256(authToken), counter, expiry
 link:     https://ashdrop.cc/p/<id>#<K>          ← K never leaves browsers
 ```
+
+## Contributing
+
+Issues and pull requests are welcome. Run `npm test` before opening a pull request, and read the
+security rules above: no third-party scripts, nothing that lets the server see keys, passwords or
+file names. Report security problems privately (see [SECURITY.md](SECURITY.md)), not in public issues.

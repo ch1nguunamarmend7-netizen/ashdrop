@@ -24,7 +24,7 @@ try {
 
 const root = createRoot(document.getElementById('root'));
 const match = location.pathname.match(/^\/p\/([a-z2-9]{10})\/?$/);
-const legal = location.pathname.match(/^\/(terms|privacy|contact)\/?$/);
+const legal = location.pathname.match(/^\/(terms|privacy|security|contact)\/?$/);
 
 if (legal) {
   root.render(<LegalPage page={legal[1]} />);

@@ -1,4 +1,4 @@
-// Terms, Privacy and Contact pages, and the footer that links to them.
+// Terms, Privacy, Security and Contact pages, and the footer that links to them.
 // The privacy text describes what worker/ and src/lib/ actually store. If you change what is
 // stored or logged, change this text in the same commit.
 import React, { useState, useEffect } from 'react';
@@ -19,6 +19,8 @@ export function Footer({ className = '' }) {
       <span>© {new Date().getFullYear()} {SITE.name}</span>
       <a href="/terms" className="hover:text-fg underline-offset-2 hover:underline">Terms</a>
       <a href="/privacy" className="hover:text-fg underline-offset-2 hover:underline">Privacy</a>
+      <a href="/security" className="hover:text-fg underline-offset-2 hover:underline">Security</a>
+      {SITE.sourceUrl && <a href={SITE.sourceUrl} target="_blank" rel="noopener noreferrer" className="hover:text-fg underline-offset-2 hover:underline">Source code</a>}
       <a href="/contact" className="hover:text-fg underline-offset-2 hover:underline">Contact</a>
       <a href="/contact#abuse" className="hover:text-fg underline-offset-2 hover:underline">Report abuse</a>
       <a href="/contact#ideas" className="text-ember hover:underline underline-offset-2">Send us ideas</a>
@@ -245,9 +247,67 @@ function Contact() {
   );
 }
 
+
+function Security() {
+  const src = SITE.sourceUrl;
+  return (
+    <>
+      <div className="rounded-2xl border border-warn/50 bg-warn/10 px-5 py-4 text-fg">
+        <div className="font-semibold mb-1">Where Ashdrop stands today</div>
+        Ashdrop is new and has <strong>not yet been independently audited</strong>. It is built for everyday secrets:
+        Wi-Fi passwords, logins, private notes, a file for a friend. For credentials that protect a company or a lot of
+        money, use a tool with a long public track record until Ashdrop has one too.
+      </div>
+
+      <H>How it protects you</H>
+      <UL>
+        <li>What you share is encrypted in your browser with AES-256-GCM before anything is uploaded.</li>
+        <li>The key is the part of the link after the #. Browsers never send that part to any server, so we never have it.</li>
+        <li>A password adds a second layer. The server only stores a one-way check value, and after the number of wrong tries you choose, the link is deleted.</li>
+        <li>Burn links are deleted from the server in the same step that hands them out, so they can only be opened once.</li>
+        <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
+      </UL>
+
+      <H>What it cannot protect against</H>
+      <UL>
+        <li><span className="text-fg">Anyone who has the full link can open it.</span> If you send it through email or a chat app, that company stores the link. Add a password and send it a different way.</li>
+        <li>Once someone opens a secret, it is on their screen. We cannot stop screenshots or copies.</li>
+        <li>A phone or computer with malware on it. No website can protect against that.</li>
+        <li>You have to trust that the code this site sends you is honest. That is true of every web app, which is why Ashdrop is open source: you can read exactly what it does.</li>
+      </UL>
+
+      <H>Open source</H>
+      <P>
+        All of Ashdrop's code is public under the {SITE.license} license: the encryption in your browser, the server, and
+        this page. {src
+          ? <>Read it on <a href={src} target="_blank" rel="noopener noreferrer" className="text-fg underline underline-offset-4 decoration-ember/60 hover:decoration-ember">GitHub</a>.</>
+          : <>The link to the code will appear here once it is published.</>}
+      </P>
+
+      <H>Check it yourself</H>
+      <P>You do not have to take our word for it. Open your browser's developer tools (F12), go to the Network tab, and create a link:</P>
+      <UL>
+        <li>The upload contains scrambled bytes, never your text or your password.</li>
+        <li>No request ever contains the part of the link after the #.</li>
+        <li>Every request goes to this site and nowhere else.</li>
+      </UL>
+
+      <H id="report">Report a security problem</H>
+      <P>
+        If you find a weakness, please tell us before telling anyone else, so we can fix it first. Email
+        {' '}<Email address={SITE.contactEmail} id="security-email" subject="Security report" /> with what you found and how
+        to reproduce it. We will reply, keep you updated while we fix it, and credit you if you would like. We will not
+        take legal action against anyone who reports a problem in good faith and does not harm other people's data.
+      </P>
+      <P>Security researchers can also find our contact details at <span className="font-mono text-fg">/.well-known/security.txt</span>.</P>
+    </>
+  );
+}
+
 const PAGES = {
   terms: { title: 'Terms of use', Body: Terms },
   privacy: { title: 'Privacy', Body: Privacy },
+  security: { title: 'Security', Body: Security },
   contact: { title: 'Contact', Body: Contact },
 };
 
@@ -263,7 +323,7 @@ export function LegalPage({ page }) {
       <header className="border-b border-line">
         <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-3">
           <a href="/" aria-label="Ashdrop home"><Logo /></a>
-          <nav className="ml-auto flex gap-1 text-[13px]" aria-label="Pages">
+          <nav className="ml-auto flex gap-1 text-[13px] overflow-x-auto no-scrollbar min-w-0" aria-label="Pages">
             {Object.entries(PAGES).map(([k, v]) => (
               <a key={k} href={`/${k}`} aria-current={k === page ? 'page' : undefined}
                 className={`rounded-lg px-3 py-1.5 transition-colors ${k === page ? 'bg-fg text-ink font-semibold' : 'text-mute hover:text-fg'}`}>{k === 'terms' ? 'Terms' : v.title}</a>
@@ -273,7 +333,7 @@ export function LegalPage({ page }) {
       </header>
       <main className="gutter flex-1 py-10 sm:py-14">
         <article className="max-w-[68ch] mx-auto text-[15px] leading-relaxed text-mute fade-in">
-          {LEGAL_IS_DRAFT && page !== 'contact' && (
+          {LEGAL_IS_DRAFT && (page === 'terms' || page === 'privacy') && (
             <div role="note" className="mb-6 rounded-xl border border-warn/50 bg-warn/10 px-4 py-3 text-[13px] text-warn">
               Draft. Before launch, fill in who runs Ashdrop and where (src/site.js), and have this page reviewed.
             </div>
