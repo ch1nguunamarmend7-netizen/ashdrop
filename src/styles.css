@@ -1,0 +1,222 @@
+@import "tailwindcss";
+
+/* Tailwind 4 colors, mapped onto Ashdrop's own tokens below so light and dark themes keep working.
+   `inline` makes utilities use these values directly, and opacity modifiers like border-ember/40 still work. */
+@theme inline {
+  --color-ink: rgb(var(--c-ink));
+  --color-panel: rgb(var(--c-panel));
+  --color-well: rgb(var(--c-well));
+  --color-line: rgb(var(--c-line));
+  --color-mute: rgb(var(--c-mute));
+  --color-fg: rgb(var(--c-fg));
+  --color-ember: rgb(var(--c-ember));
+  --color-cyan: rgb(var(--c-cyan));
+  --color-warn: rgb(var(--c-warn));
+  --color-ok: rgb(var(--c-ok));
+}
+
+/* Keep Tailwind 3 behaviour that the design relies on. */
+@layer base {
+  *, ::after, ::before, ::backdrop, ::file-selector-button { border-color: var(--line, currentColor); }
+  button:not(:disabled), [role="button"]:not(:disabled) { cursor: pointer; }
+}
+
+/* Ashdrop's own styles sit in the components layer, so Tailwind utilities on an element still win,
+   and the !important rules (motion off, Performance mode) still beat everything. */
+@layer components {
+
+/* Ashdrop tokens, motion and component styles (ported from the prototype). */
+  /* Layout: sticky ash-black header, two-column workspace (editor | control panel) collapsing to one column on phones; modals float over a blurred scrim. */
+  :root {
+    --ink: #0d0f12;        /* page ground, zinc-black with a cool bias */
+    --panel: #15181d;      /* raised surfaces */
+    --well: #0a0c0f;       /* editor well */
+    --line: #262b33;       /* hairlines */
+    --mute: #8a93a3;       /* secondary text, slate */
+    --fg: #e6e9ee;         /* primary text */
+    --ember: #ff7a3d;      /* accent: the burn */
+    --ember-soft: rgba(255,122,61,.14);
+    --cyan: #5cd6e0;       /* secondary accent: the key */
+    --warn: #f5b84a;
+    --ok: #57d18c;
+    /* rgb channels so Tailwind opacity modifiers work */
+    --c-ink: 13 15 18; --c-panel: 21 24 29; --c-well: 10 12 15; --c-line: 38 43 51; --c-mute: 138 147 163;
+    --c-fg: 230 233 238; --c-ember: 255 122 61; --c-cyan: 92 214 224; --c-warn: 245 184 74; --c-ok: 87 209 140;
+    --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+    --font-body: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
+    --font-mono: "Martian Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  html, body { background: var(--ink); color: var(--fg); }
+  body { font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
+  body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--ink); }
+  .gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  .font-display { font-family: var(--font-display); text-wrap: balance; }
+  .font-mono { font-family: var(--font-mono); }
+  .label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); font-weight: 600; }
+  .tabular { font-variant-numeric: tabular-nums; }
+  textarea.editor { tab-size: 2; caret-color: var(--ember); }
+  textarea.editor::selection { background: var(--ember-soft); }
+  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: linear-gradient(to right, var(--ember) var(--pct,0%), var(--line) var(--pct,0%)); }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--fg); border: 4px solid var(--ember); cursor: grab; }
+  input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--fg); border: 4px solid var(--ember); cursor: grab; }
+  .ember-glow { box-shadow: 0 0 0 1px var(--ember), 0 10px 40px -12px rgba(255,122,61,.55); }
+  .scrim { background: rgba(5,6,8,.72); backdrop-filter: blur(6px); }
+  .no-scrollbar::-webkit-scrollbar { display: none; }
+  .no-scrollbar { scrollbar-width: none; }
+  @keyframes rise { from { transform: translateY(8px); opacity: .6 } to { transform: none; opacity: 1 } }
+  .rise { animation: rise calc(.22s * var(--spd)) ease-out; }
+  @keyframes flicker { 0%,100% { opacity: 1 } 50% { opacity: .55 } }
+  .flicker { animation: flicker calc(1.6s * var(--spd)) ease-in-out infinite; }
+  :root { --ease-out: cubic-bezier(.22,1,.36,1); --ease-spring: cubic-bezier(.34,1.56,.64,1); }
+  @keyframes step-fwd { from { transform: translateX(32px); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes step-back { from { transform: translateX(-32px); opacity: 0 } to { transform: none; opacity: 1 } }
+  .step-fwd { animation: step-fwd calc(.42s * var(--spd)) var(--ease-out) both; }
+  .step-back { animation: step-back calc(.42s * var(--spd)) var(--ease-out) both; }
+  @keyframes stagger-in { from { transform: translateY(16px) scale(.98); opacity: 0 } to { transform: none; opacity: 1 } }
+  .stagger > * { animation: stagger-in calc(.5s * var(--spd)) var(--ease-out) both; animation-delay: calc(var(--i, 0) * calc(45ms * var(--spd)) + calc(60ms * var(--spd))); }
+  @keyframes fade-in { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes fade-out { from { opacity: 1 } to { opacity: 0 } }
+  .fade-in { animation: fade-in calc(.3s * var(--spd)) ease-out both; }
+  .scrim { animation: fade-in calc(.22s * var(--spd)) ease-out both; }
+  .scrim.closing { animation: fade-out calc(.18s * var(--spd)) ease-in both; }
+  @keyframes pop-in { from { transform: translateY(18px) scale(.95); opacity: 0 } to { transform: none; opacity: 1 } }
+  @keyframes pop-out { from { transform: none; opacity: 1 } to { transform: translateY(12px) scale(.97); opacity: 0 } }
+  .pop { animation: pop-in calc(.38s * var(--spd)) var(--ease-out) both; }
+  .closing .pop { animation: pop-out calc(.18s * var(--spd)) ease-in both; }
+  @keyframes shake { 10%,90% { transform: translateX(-2px) } 20%,80% { transform: translateX(4px) } 30%,50%,70% { transform: translateX(-7px) } 40%,60% { transform: translateX(7px) } }
+  .shake { animation: shake calc(.45s * var(--spd)); }
+  @keyframes burn-away { 0% { filter: none; opacity: 1; transform: none } 45% { filter: blur(1px) sepia(1) saturate(5) hue-rotate(-25deg) brightness(1.3); opacity: .85 } 100% { filter: blur(10px) sepia(1) saturate(6); opacity: 0; transform: translateY(-18px) scale(1.03) } }
+  .burn-away { animation: burn-away calc(.75s * var(--spd)) ease-in both; }
+  @keyframes row-out { to { opacity: 0; transform: translateX(28px) } }
+  .row-out { animation: row-out calc(.28s * var(--spd)) ease-in both; }
+  @keyframes check-pop { 0% { transform: scale(.5) } 70% { transform: scale(1.18) } 100% { transform: scale(1) } }
+  .check-pop { animation: check-pop calc(.4s * var(--spd)) var(--ease-spring); }
+  @keyframes shimmer { from { background-position: 200% 0 } to { background-position: -200% 0 } }
+  .shimmer { background-image: linear-gradient(100deg, transparent 30%, rgba(255,255,255,.4) 50%, transparent 70%); background-size: 200% 100%; animation: shimmer calc(1.1s * var(--spd)) linear infinite; }
+  @keyframes glow-pulse { 0%,100% { box-shadow: 0 0 0 1px var(--ember), 0 10px 40px -12px rgba(255,122,61,.55) } 50% { box-shadow: 0 0 0 1px var(--ember), 0 14px 54px -10px rgba(255,122,61,.85) } }
+  .ember-glow { animation: glow-pulse calc(3.2s * var(--spd)) ease-in-out infinite; }
+  .lift { transition: transform calc(.28s * var(--spd)) var(--ease-out), border-color calc(.2s * var(--spd)), background-color calc(.2s * var(--spd)), box-shadow calc(.28s * var(--spd)); }
+  .lift:hover { transform: translateY(-3px); box-shadow: 0 16px 34px -18px rgba(0,0,0,.9); }
+  .press { transition: transform calc(.15s * var(--spd)) var(--ease-out); }
+  .press:active { transform: scale(.97); }
+  :root { --spd: 1; --tint: 100%; }
+  @keyframes ash-rise { 0% { transform: translate(0, 0) scale(1); opacity: 0 } 15% { opacity: 1 } 100% { transform: translate(var(--dx, 0), -180px) scale(.2); opacity: 0 } }
+  .ash { position: absolute; bottom: 20%; border-radius: 50%; background: radial-gradient(circle, #ffd27a, var(--ember) 60%, transparent 70%); animation: ash-rise calc(1s * var(--spd)) ease-out both; }
+  @keyframes pk-x { from { left: 0 } to { left: calc(100% - 10px) } }
+  @keyframes pk-y { from { top: 0 } to { top: calc(100% - 10px) } }
+  .wire { position: relative; background: var(--line); }
+  .wire .pk { position: absolute; width: 10px; height: 10px; border-radius: 3px; background: var(--cyan); box-shadow: 0 0 12px var(--cyan); }
+  @media (min-width: 640px) { .wire .pk { top: 50%; margin-top: -5px; animation: pk-x calc(2.2s * var(--spd)) linear infinite; } }
+  @media (max-width: 639.98px) { .wire .pk { left: 50%; margin-left: -5px; animation: pk-y calc(1.6s * var(--spd)) linear infinite; } }
+  .wire .pk.late { animation-delay: calc(-1.1s * var(--spd)); }
+  @keyframes key-x { 0% { left: 8px; opacity: 0 } 8% { opacity: 1 } 92% { opacity: 1 } 100% { left: calc(100% - 96px); opacity: 0 } }
+  .keytrack .pk { position: absolute; top: 50%; margin-top: -14px; animation: key-x calc(4.4s * var(--spd)) linear infinite; }
+  @keyframes trail-in { 0% { opacity: 0; transform: translateY(6px) scale(.85) } 8% { opacity: 1; transform: none } 80% { opacity: 1; transform: none } 92%, 100% { opacity: 0; transform: scale(.95) } }
+  .trail-chip { animation: trail-in calc(6s * var(--spd)) var(--ease-out) infinite both; }
+  @keyframes burn-loop { 0%, 40% { filter: none; opacity: 1; transform: none; color: var(--fg) }
+    52% { filter: blur(.5px) sepia(1) saturate(6) hue-rotate(-25deg); color: var(--ember); opacity: .9 }
+    66% { filter: blur(8px); opacity: 0; transform: translateY(-10px) } 88% { opacity: 0; transform: translateY(6px); filter: none } 100% { opacity: 1; transform: none } }
+  .burn-loop { animation: burn-loop calc(5s * var(--spd)) ease-in-out infinite; }
+  @keyframes shackle { 0%, 55%, 100% { transform: translateY(0) } 65% { transform: translateY(-3px) } 78% { transform: translateY(0) } }
+  .why-shackle { animation: shackle calc(3s * var(--spd)) var(--ease-spring) infinite; }
+  @keyframes flame { 0%, 100% { transform: scale(1) } 40% { transform: scale(1.06, .95) } 70% { transform: scale(.96, 1.05) } }
+  .why-flame { transform-origin: 12px 20px; transform-box: view-box; animation: flame calc(1.4s * var(--spd)) ease-in-out infinite; }
+  @keyframes draw { 0%, 15% { stroke-dashoffset: 12 } 45%, 85% { stroke-dashoffset: 0 } 100% { stroke-dashoffset: 12 } }
+  .why-check { stroke-dasharray: 12; animation: draw calc(3s * var(--spd)) ease-in-out infinite; }
+  .why-strike { stroke-dasharray: 23; animation: draw calc(3.4s * var(--spd)) ease-in-out infinite; }
+  @keyframes knob { 0%, 35% { transform: translateX(0) } 50%, 85% { transform: translateX(8px) } 100% { transform: translateX(0) } }
+  .why-knob { animation: knob calc(3s * var(--spd)) var(--ease-spring) infinite; }
+  @keyframes ping { 0%, 100% { opacity: 1; transform: scale(1) } 50% { opacity: .4; transform: scale(1.5) } }
+  .why-ping { transform-origin: 18px 16px; transform-box: view-box; animation: ping calc(1.8s * var(--spd)) ease-in-out infinite; }
+  .grad-text { background: linear-gradient(100deg, var(--ember), #ff5fa2 35%, #b56bff 65%, var(--cyan)); background-size: 200% 100%;
+    -webkit-background-clip: text; background-clip: text; color: transparent; animation: grad-shift calc(8s * var(--spd)) ease-in-out infinite alternate; }
+  @keyframes grad-shift { from { background-position: 0% 50% } to { background-position: 100% 50% } }
+  @keyframes blob-float { 0%, 100% { transform: translate(0, 0) scale(1) } 33% { transform: translate(30px, -20px) scale(1.1) } 66% { transform: translate(-20px, 25px) scale(.92) } }
+  .blob { position: absolute; width: 200px; height: 200px; border-radius: 50%; filter: blur(60px); opacity: .35; animation: blob-float calc(12s * var(--spd)) ease-in-out infinite; }
+  .blob.big { width: 300px; height: 300px; filter: blur(80px); opacity: .22; }
+  :root[data-ash="light"] .blob { opacity: .2; } :root[data-ash="light"] .blob.big { opacity: .13; }
+  details > summary { list-style: none; } details > summary::-webkit-details-marker { display: none; }
+  details[open] .chev { transform: rotate(90deg); }
+  @keyframes pulse-dot { 0%,100% { box-shadow: 0 0 0 0 rgba(92,214,224,.5) } 50% { box-shadow: 0 0 0 5px rgba(92,214,224,0) } }
+  .pulse-dot { animation: pulse-dot calc(2s * var(--spd)) ease-out infinite; }
+  @keyframes demo-slide { 0%,12% { left: 6px } 50%,62% { left: calc(100% - 26px) } 100% { left: 6px } }
+  .motion-demo { animation: demo-slide calc(1.8s * var(--spd)) var(--ease-out) infinite; left: 6px; }
+  .transition, .transition-colors, .transition-all, .transition-transform, .transition-opacity { transition-duration: calc(150ms * var(--spd)) !important; }
+  .duration-300 { transition-duration: calc(300ms * var(--spd)) !important; }
+  .duration-500 { transition-duration: calc(500ms * var(--spd)) !important; }
+  .duration-700 { transition-duration: calc(700ms * var(--spd)) !important; }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }
+  :root[data-motion="off"] *, :root[data-motion="off"] *::before, :root[data-motion="off"] *::after {
+    animation-duration: .001ms !important; animation-delay: 0ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important;
+  }
+  /* Light theme: same roles, daylight values */
+  :root[data-ash="light"] {
+    --ink: #f4f5f7; --panel: #ffffff; --well: #eceef2; --line: #dadfe6; --mute: #5d6674; --fg: #14171c;
+    --ember: #e2561a; --ember-soft: rgba(226,86,26,.10); --cyan: #0b8794; --warn: #a96a0f; --ok: #16894d;
+    --c-ink: 244 245 247; --c-panel: 255 255 255; --c-well: 236 238 242; --c-line: 218 223 230; --c-mute: 93 102 116;
+    --c-fg: 20 23 28; --c-ember: 226 86 26; --c-cyan: 11 135 148; --c-warn: 169 106 15; --c-ok: 22 137 77;
+    --tint: 62%;
+    color-scheme: light;
+  }
+  :root[data-ash="light"] .scrim { background: rgba(20,23,28,.38); }
+  :root[data-ash="light"] .lift:hover { box-shadow: 0 16px 34px -18px rgba(20,23,28,.35); }
+  html, body { transition: background-color calc(.4s * var(--spd)) ease, color calc(.4s * var(--spd)) ease; }
+
+/* ---------- logo flame ---------- */
+.flame-outer, .flame-mid, .flame-core, .logo-spark { transform-box: fill-box; transform-origin: 50% 100%; }
+.flame-outer { animation: flame-a calc(1.7s * var(--spd)) ease-in-out infinite; }
+.flame-mid   { animation: flame-b calc(1.15s * var(--spd)) ease-in-out infinite; }
+.flame-core  { animation: flame-c calc(.8s * var(--spd)) ease-in-out infinite; }
+@keyframes flame-a {
+  0%, 100% { transform: scale(1, 1) skewX(0deg) }
+  20% { transform: scale(.97, 1.06) skewX(-2.5deg) }
+  45% { transform: scale(1.03, .95) skewX(1.5deg) }
+  70% { transform: scale(.98, 1.04) skewX(2deg) }
+}
+@keyframes flame-b {
+  0%, 100% { transform: scale(1, 1) skewX(0deg) }
+  30% { transform: scale(1.05, .92) skewX(3deg) }
+  60% { transform: scale(.94, 1.1) skewX(-3deg) }
+}
+@keyframes flame-c {
+  0%, 100% { transform: scale(1, 1); opacity: 1 }
+  50% { transform: scale(.88, 1.14); opacity: .8 }
+}
+.logo-spark { transform-origin: 50% 50%; opacity: 0; animation: spark-rise calc(1.8s * var(--spd)) ease-out infinite; }
+.logo-spark.s2 { animation-delay: calc(.6s * var(--spd)); animation-duration: calc(2.1s * var(--spd)); }
+.logo-spark.s3 { animation-delay: calc(1.2s * var(--spd)); animation-duration: calc(1.5s * var(--spd)); }
+@keyframes spark-rise {
+  0% { transform: translate(0, 0) scale(1); opacity: 0 }
+  15% { opacity: 1 }
+  100% { transform: translate(var(--sx, 1px), -9px) scale(.3); opacity: 0 }
+}
+.logo-spark.s1 { --sx: -2px; } .logo-spark.s2 { --sx: 2px; }
+.logo-glow { position: absolute; inset: -5px; border-radius: 50%; pointer-events: none;
+  background: radial-gradient(circle at 50% 62%, rgba(255, 122, 61, .45), transparent 65%);
+  animation: glow-breathe calc(2.4s * var(--spd)) ease-in-out infinite; }
+@keyframes glow-breathe { 0%, 100% { opacity: .55; transform: scale(.92) } 50% { opacity: 1; transform: scale(1.08) } }
+.logo:hover .flame-outer { animation-duration: calc(.9s * var(--spd)); }
+.logo:hover .logo-glow { animation-duration: calc(1.2s * var(--spd)); }
+
+/* ---------- pulsing status light ---------- */
+.live-dot { position: relative; width: 8px; height: 8px; border-radius: 50%; background: var(--ok); flex-shrink: 0; }
+.live-dot::after { content: ""; position: absolute; inset: 0; border-radius: 50%; background: var(--ok);
+  animation: live-ring calc(1.8s * var(--spd)) ease-out infinite; }
+@keyframes live-ring { 0% { transform: scale(1); opacity: .65 } 100% { transform: scale(2.8); opacity: 0 } }
+
+/* ---------- performance mode: as light as the page can run ---------- */
+:root[data-perf="on"] *, :root[data-perf="on"] *::before, :root[data-perf="on"] *::after {
+  animation: none !important; transition: none !important;
+  backdrop-filter: none !important; -webkit-backdrop-filter: none !important;
+  filter: none !important; box-shadow: none !important; text-shadow: none !important;
+}
+:root[data-perf="on"] .blob, :root[data-perf="on"] .ash, :root[data-perf="on"] .logo-glow,
+:root[data-perf="on"] .logo-spark, :root[data-perf="on"] .motion-demo, :root[data-perf="on"] .live-dot::after { display: none !important; }
+:root[data-perf="on"] .scrim { background: rgba(5, 6, 8, .82); }
+:root[data-perf="on"] .grad-text { background: none; color: var(--ember); -webkit-background-clip: border-box; background-clip: border-box; }
+:root[data-perf="on"] .stagger > *, :root[data-perf="on"] .pop, :root[data-perf="on"] .step-fwd, :root[data-perf="on"] .step-back, :root[data-perf="on"] .fade-in { opacity: 1 !important; transform: none !important; }
+}

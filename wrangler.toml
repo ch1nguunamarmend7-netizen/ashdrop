@@ -1,0 +1,52 @@
+name = "ashdrop"
+main = "worker/index.js"
+compatibility_date = "2025-06-01"
+
+# The built site (npm run build -> dist/) is served by the same Worker.
+# run_worker_first lets the Worker add security headers to every page, and
+# single-page-application sends /p/:id to index.html.
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+# Encrypted payloads. Create it once with: npx wrangler r2 bucket create ashdrop-blobs
+[[r2_buckets]]
+binding = "BLOBS"
+bucket_name = "ashdrop-blobs"
+
+# One Durable Object per link: holds the attempt counter, burn state and expiry alarm.
+[[durable_objects.bindings]]
+name = "LINKS"
+class_name = "LinkDO"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["LinkDO"]
+
+# Rate limits (needs Wrangler 4.36+). Counted per IP address, per Cloudflare location.
+# Periods can only be 10 or 60 seconds. namespace_id just has to be unique in your account.
+[[ratelimits]]
+name = "CREATE_LIMITER"
+namespace_id = "41001"
+  [ratelimits.simple]
+  limit = 20      # new links per minute
+  period = 60
+
+[[ratelimits]]
+name = "OPEN_LIMITER"
+namespace_id = "41002"
+  [ratelimits.simple]
+  limit = 60      # open attempts per minute (each link also has its own password lockout)
+  period = 60
+
+# Workers Logs: request method, URL path, status and errors, kept 3 days (Free) or 7 days (Paid).
+# The key is never in a URL the server sees, and the Worker never logs request bodies.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# Admin token for removing reported links: set it once with
+#   npx wrangler secret put ADMIN_TOKEN
+# (use a long random value, at least 32 characters). Never put it in this file.
