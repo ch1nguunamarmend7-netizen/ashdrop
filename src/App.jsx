@@ -46,6 +46,7 @@ const EXPIRY = [
   { id: '1h', label: '1 hour', sub: 'Then purged from storage' },
   { id: '24h', label: '24 hours', sub: 'Free tier maximum' },
 ];
+const EXPIRY_TONE = { burn: 'var(--ember)', '1h': 'var(--violet)', '24h': 'var(--cyan)' };
 const SAMPLE = `# .env.production — rotate after sharing
 DATABASE_URL=postgres://deploy:••••••@db.internal:5432/app
 STRIPE_WEBHOOK_SECRET=whsec_example_not_real
@@ -131,7 +132,7 @@ export const Logo = () => {
 function Toggle({ on, onChange, id, label }) {
   return (
     <button id={id} role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
-      className={`relative w-11 h-6 rounded-full transition-colors ${on ? 'bg-ember' : 'bg-line'}`}>
+      className={`relative w-11 h-6 rounded-full transition-colors ${on ? 'grad-bg' : 'bg-line'}`}>
       <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-fg transition-transform duration-300 ${on ? 'translate-x-5' : ''}`} style={{ transitionTimingFunction: 'var(--ease-spring)' }} />
     </button>
   );
@@ -269,7 +270,7 @@ function OutputModal({ result, onClose, onOpenRecipient }) {
         </div>
         )}
         {!result.qrOnly && <div className="flex gap-2">
-          <button onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'bg-fg text-ink hover:opacity-90'}`}>
+          <button onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'btn-grad'}`}>
             {copied === true ? 'Copied to clipboard' : copied === 'select' ? 'Selected · press Ctrl/⌘ + C' : 'Copy link'}
           </button>
           <button id="show-qr" onClick={() => setShowQr(v => !v)} aria-expanded={showQr} title="Show QR code"
@@ -444,7 +445,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
     <div className="fixed inset-0 z-[55] bg-ink overflow-y-auto fade-in" style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
       <div className="pointer-events-none absolute inset-0" aria-hidden="true"
         style={{ background: 'radial-gradient(50% 40% at 15% 0%, rgba(255,122,61,.10), transparent 70%), radial-gradient(50% 40% at 90% 100%, rgba(92,214,224,.08), transparent 70%)' }} />
-      <div className="relative gutter max-w-6xl mx-auto py-3 flex items-center gap-3 border-b border-line">
+      <div className="relative head-glow gutter max-w-6xl mx-auto py-3 flex items-center gap-3 border-b border-transparent">
         <Logo />
         <span className="hidden sm:flex items-center gap-2 font-mono text-[11.5px] text-mute min-w-0 truncate">
           <span className="w-2 h-2 rounded-full bg-ok shrink-0" aria-hidden="true" />{location.host}/p/{id}<span className="text-cyan">#••••••</span>
@@ -485,7 +486,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <label htmlFor="rec-pw" className="sr-only">Password</label>
               <input id="rec-pw" type="password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
                 className="flex-1 min-w-0 bg-well border border-line rounded-xl px-4 py-3 font-mono text-[14px] outline-hidden focus:border-cyan" autoComplete="off" />
-              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold bg-fg text-ink disabled:opacity-50">{busy ? 'Checking…' : 'Unlock'}</button>
+              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-grad disabled:opacity-50">{busy ? 'Checking…' : 'Unlock'}</button>
             </form>
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
             <p className="text-[12px] text-mute mt-4">Your browser turns the password into a check token. The password and the key in the link never leave this device.</p>
@@ -506,7 +507,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <>
                 <pre className="mt-4 rounded-2xl bg-well border border-line p-4 font-mono text-[12.5px] leading-[1.7] overflow-auto max-h-[50vh] whitespace-pre"
                   style={{ borderLeft: `3px solid ${colorOf(out.lang)}` }}>{out.text}</pre>
-                <button onClick={copyText} className={`press mt-3 w-full rounded-xl py-3 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'bg-fg text-ink hover:opacity-90'}`}>{copied === true ? 'Copied' : copied === 'fail' ? 'Select the text to copy it' : 'Copy text'}</button>
+                <button onClick={copyText} className={`press mt-3 w-full rounded-xl py-3 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'btn-grad'}`}>{copied === true ? 'Copied' : copied === 'fail' ? 'Select the text to copy it' : 'Copy text'}</button>
               </>
             ) : (
               <>
@@ -516,7 +517,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
                       {(() => { const ts = TYPE_STYLE[typeOf(out.fileName, out.mime)]; return <span className="w-12 h-12 rounded-xl grid place-items-center font-mono text-[11px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }}>{ts.t}</span>; })()}
                       <div className="min-w-0"><div className="font-mono text-[13px] break-all">{out.fileName}</div><div className="text-mute text-[12px] mt-0.5">{fmtBytes(out.size)} · decrypted intact</div></div>
                     </div>}
-                <button onClick={save} className="press mt-3 w-full rounded-xl py-3 font-semibold bg-fg text-ink hover:opacity-90 transition">Download file</button>
+                <button onClick={save} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download file</button>
               </>
             )}
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
@@ -684,7 +685,7 @@ function PreviewModal({ item, onClose, onDownload }) {
         {state.phase === 'error' && <div className="text-warn text-[13px]">Could not decrypt: {state.msg}</div>}
       </div>
       {state.phase !== 'decrypting' && state.phase !== 'error' && (
-        <button onClick={onDownload} className="mt-4 w-full rounded-lg py-2.5 font-semibold bg-fg text-ink hover:opacity-90 transition-colors flex items-center justify-center gap-2">
+        <button onClick={onDownload} className="mt-4 w-full rounded-lg py-2.5 font-semibold btn-grad transition-colors flex items-center justify-center gap-2">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v12M6 10l6 6 6-6M5 20h14"/></svg>
           Download decrypted file
         </button>
@@ -910,7 +911,7 @@ function Vault({ files, setFiles, onPro, onShare, cap = FREE_CAP, plan, folders,
             <div className="font-semibold">Save your recovery key</div>
             <div className="text-mute">If you forget your password, it is the only way back into your vault. Ashdrop cannot reset it for you.</div>
           </div>
-          <button id="open-recovery" onClick={onRecovery} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold bg-fg text-ink hover:opacity-90 transition shrink-0">Get my key</button>
+          <button id="open-recovery" onClick={onRecovery} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-grad transition shrink-0">Get my key</button>
         </div>
       )}
       {/* usage */}
@@ -1452,11 +1453,11 @@ function Seg({ options, value, onChange, label, id, small }) {
   return (
     <div className="relative grid gap-1 p-1 rounded-xl bg-well border border-line" role="radiogroup" aria-label={label}
       style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
-      <span className="absolute top-1 bottom-1 left-1 rounded-lg bg-panel ring-1 ring-line shadow-xs transition-transform duration-500" aria-hidden="true"
+      <span className="absolute top-1 bottom-1 left-1 rounded-lg grad-bg shadow-xs transition-transform duration-500" aria-hidden="true"
         style={{ width: `calc((100% - 8px - ${(n - 1) * 4}px) / ${n})`, transform: `translateX(calc(${i} * (100% + 4px)))`, transitionTimingFunction: 'var(--ease-out)' }} />
       {options.map(o => (
         <button key={String(o.v)} id={`${id}-${o.v}`} role="radio" aria-checked={o.v === value} onClick={() => onChange(o.v)}
-          className={`relative z-10 rounded-lg ${small ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'} font-medium transition-colors duration-300 truncate px-1 ${o.v === value ? 'text-fg' : 'text-mute hover:text-fg'}`}>
+          className={`relative z-10 rounded-lg ${small ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'} font-medium transition-colors duration-300 truncate px-1 ${o.v === value ? 'on-grad font-semibold' : 'text-mute hover:text-fg'}`}>
           {o.icon && <span className="mr-1.5" aria-hidden="true">{o.icon}</span>}{o.label}
         </button>
       ))}
@@ -1476,10 +1477,12 @@ function Row({ title, sub, children, stack }) {
   );
 }
 
+const SECTION_TONES = [['var(--violet)', 'var(--pink)'], ['var(--ember)', 'var(--gold)'], ['var(--gold)', 'var(--ember)'], ['var(--cyan)', 'var(--ok)'], ['var(--pink)', 'var(--violet)']];
 function Section({ title, children, i, tone }) {
+  const [t1, t2] = tone === 'danger' ? ['var(--ember)', 'var(--ember)'] : SECTION_TONES[i % SECTION_TONES.length];
   return (
-    <section style={{ '--i': i }} className={`rounded-2xl border bg-panel px-5 sm:px-6 py-2 ${tone === 'danger' ? 'border-ember/40' : 'border-line'}`}>
-      <h2 className={`label pt-4 ${tone === 'danger' ? 'text-ember' : ''}`}>{title}</h2>
+    <section style={{ '--i': i, '--t1': t1, '--t2': t2 }} className={`tone-top rounded-2xl border bg-panel px-5 sm:px-6 py-2 ${tone === 'danger' ? 'border-ember/40' : 'border-line'}`}>
+      <h2 className="label pt-4 tone-text">{title}</h2>
       {children}
     </section>
   );
@@ -1533,8 +1536,8 @@ function PasscodeForm({ mode, needCurrent, onSubmit, submitLabel, idPrefix = 'pc
         <input id={`${idPrefix}-confirm`} type="password" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} placeholder="Repeat it" className={field} />
       </>}
       {err && <div role="alert" className="text-[12.5px] text-warn">{err}</div>}
-      <button id={`${idPrefix}-submit`} disabled={busy} className="press rounded-xl py-3 font-semibold bg-fg text-ink hover:opacity-90 transition disabled:opacity-60 flex items-center justify-center gap-2">
-        {busy && <span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />}{busy ? 'Working…' : submitLabel}
+      <button id={`${idPrefix}-submit`} disabled={busy} className="press rounded-xl py-3 font-semibold btn-grad transition disabled:opacity-60 flex items-center justify-center gap-2">
+        {busy && <span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />}{busy ? 'Working…' : submitLabel}
       </button>
     </form>
   );
@@ -1928,13 +1931,13 @@ function Settings({ settings, setSettings, plan, onCancelPlan, onUpgrade, signed
           <div className="flex sm:justify-end">
             {signedIn
               ? <button id="sign-out" onClick={onSignOut} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">Sign out</button>
-              : <button id="sign-in" onClick={onSignIn} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold bg-fg text-ink hover:opacity-90 transition">Sign in</button>}
+              : <button id="sign-in" onClick={onSignIn} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-grad transition">Sign in</button>}
           </div>
         </Row>}
         {FEATURES.recovery && <Row title="Recovery key" sub={recoverySaved ? 'Saved. A new key cancels the old one.' : 'Not saved yet. Without it, a forgotten password means a lost vault.'}>
           <div className="flex sm:justify-end items-center gap-2 flex-wrap">
             {!recoverySaved && <span className="text-[11.5px] font-semibold text-warn">Not saved</span>}
-            <button id="view-recovery" onClick={onRecovery} className={`press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition ${recoverySaved ? 'border border-line hover:border-mute' : 'bg-fg text-ink hover:opacity-90'}`}>{recoverySaved ? 'View key' : 'Save key'}</button>
+            <button id="view-recovery" onClick={onRecovery} className={`press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition ${recoverySaved ? 'border border-line hover:border-mute' : 'btn-grad'}`}>{recoverySaved ? 'View key' : 'Save key'}</button>
             {recoverySaved && <button id="new-recovery" onClick={onNewRecovery} className="press rounded-lg px-3 py-2 text-[13px] text-mute hover:text-fg">Make new</button>}
           </div>
         </Row>}
@@ -1997,7 +2000,7 @@ function Stepper({ labels, idx, maxIdx, onJump }) {
             <button onClick={() => canJump && onJump(i)} disabled={!canJump} aria-current={here ? 'step' : undefined}
               className={`flex items-center gap-2 min-w-0 ${canJump ? 'cursor-pointer hover:text-fg' : 'cursor-default'}`}>
               <span className={`w-7 h-7 rounded-full grid place-items-center text-[12px] font-mono font-semibold shrink-0 transition-all duration-300
-                ${here ? 'bg-ember text-ink scale-110 shadow-[0_0_0_4px_rgba(255,122,61,.18)]' : done ? 'bg-ember/20 text-ember border border-ember/50' : 'bg-panel text-mute border border-line'}`}>
+                ${here ? 'grad-bg on-grad scale-110 shadow-[0_0_0_4px_rgba(255,95,162,.2)]' : done ? 'bg-ember/20 text-ember border border-ember/50' : 'bg-panel text-mute border border-line'}`}>
                 <span key={done ? 'd' : 'n'} className={done ? 'check-pop' : ''}>{done ? '✓' : i + 1}</span>
               </span>
               <span className={`text-[12.5px] font-medium truncate hidden sm:block ${here ? 'text-fg' : 'text-mute'}`}>{label}</span>
@@ -2005,7 +2008,7 @@ function Stepper({ labels, idx, maxIdx, onJump }) {
             {i < labels.length - 1 && (
               <span className="relative h-0.5 flex-1 min-w-3 rounded-full bg-line overflow-hidden" aria-hidden="true">
                 <span className="absolute inset-0 rounded-full origin-left transition-transform duration-500"
-                  style={{ transform: `scaleX(${done ? 1 : 0})`, background: 'linear-gradient(90deg, var(--ember), #c46bff)', transitionTimingFunction: 'var(--ease-out)' }} />
+                  style={{ transform: `scaleX(${done ? 1 : 0})`, background: 'linear-gradient(90deg, var(--ember), var(--pink), var(--violet))', transitionTimingFunction: 'var(--ease-out)' }} />
               </span>
             )}
           </li>
@@ -2015,19 +2018,19 @@ function Stepper({ labels, idx, maxIdx, onJump }) {
   );
 }
 
-function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0 }) {
+function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0, t1 = 'var(--ember)', t2 = 'var(--pink)' }) {
   return (
-    <button id={id} onClick={onClick} style={{ '--i': i }}
-      className="group lift press text-left rounded-2xl border border-line bg-panel p-5 sm:p-6 flex flex-col gap-4 hover:border-ember hover:bg-[var(--ember-soft)]">
-      <span className="w-12 h-12 rounded-xl bg-well border border-line grid place-items-center group-hover:border-ember/60 group-hover:scale-110 group-hover:-rotate-6 transition-all duration-300" aria-hidden="true">{icon}</span>
+    <button id={id} onClick={onClick} style={{ '--i': i, '--t1': t1, '--t2': t2 }}
+      className="group lift press tone-card tone-top text-left rounded-2xl border p-5 sm:p-6 flex flex-col gap-4">
+      <span className="tone-icon w-12 h-12 rounded-xl grid place-items-center group-hover:scale-110 group-hover:-rotate-6 transition-all duration-300" aria-hidden="true">{icon}</span>
       <span>
         <span className="block font-display text-[21px] font-bold">{title}</span>
         <span className="block text-mute text-[13px] mt-1">{sub}</span>
       </span>
       <span className="flex flex-wrap gap-1.5">
-        {examples.map(x => <span key={x} className="font-mono text-[11px] text-mute bg-well border border-line rounded-md px-2 py-0.5">{x}</span>)}
+        {examples.map(x => <span key={x} className="tone-chip font-mono text-[11px] border rounded-md px-2 py-0.5">{x}</span>)}
       </span>
-      <span className="mt-auto text-[13px] font-semibold text-ember inline-flex items-center gap-1">Choose <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span></span>
+      <span className="tone-text mt-auto text-[13px] font-semibold inline-flex items-center gap-1">Choose <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span></span>
     </button>
   );
 }
@@ -2218,16 +2221,16 @@ function App() {
   return (
     <div className="min-h-full">
       {/* header */}
-      <header className="sticky z-40 bg-ink/90 backdrop-blur-sm border-b border-line" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
-        <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-3">
+      <header className="head-glow sticky z-40 bg-ink/80 backdrop-blur-sm border-b border-transparent" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
+        <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-2 sm:gap-3">
           <button onClick={() => { setView('share'); }} aria-label="Ashdrop home"><Logo /></button>
           <nav className="mx-auto overflow-x-auto no-scrollbar min-w-0" aria-label="Sections">
             <div className="relative grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
-              <span className="absolute top-1 bottom-1 left-1 rounded-lg bg-fg transition-all duration-500" aria-hidden="true"
+              <span className="absolute top-1 bottom-1 left-1 rounded-lg grad-bg transition-all duration-500" aria-hidden="true"
                 style={{ width: 'calc((100% - 12px) / 2)', transform: `translateX(calc(${Math.max(navIdx, 0)} * (100% + 4px))) scale(${navIdx < 0 ? 0.85 : 1})`, opacity: navIdx < 0 ? 0 : 1, transitionTimingFunction: 'var(--ease-out)' }} />
               {NAV.map(([id, label]) => (
                 <button key={id} id={`nav-${id}`} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
-                  className={`relative z-10 px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'text-ink' : 'text-mute hover:text-fg'}`}>
+                  className={`relative z-10 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'on-grad font-semibold' : 'text-mute hover:text-fg'}`}>
                   {label}
                 </button>
               ))}
@@ -2242,10 +2245,10 @@ function App() {
             <span className={`transition-transform duration-500 ${view === 'settings' ? 'rotate-90' : 'group-hover:rotate-45'}`} style={{ transitionTimingFunction: 'var(--ease-out)' }}>{GEAR}</span>
           </button>
           {!FEATURES.pro && FEATURES.accounts && !signedIn
-            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold bg-fg text-ink hover:opacity-90 transition whitespace-nowrap">Sign in</button>
+            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-grad transition whitespace-nowrap">Sign in</button>
             : !FEATURES.pro ? null
             : FEATURES.accounts && !signedIn
-            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold bg-fg text-ink hover:opacity-90 transition whitespace-nowrap">Sign in</button>
+            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-grad transition whitespace-nowrap">Sign in</button>
             : plan.tier === 'pro'
               ? <button onClick={() => setView('settings')} className="shrink-0 rounded-lg px-3 py-2 text-[12px] font-semibold border border-ember/50 text-ember whitespace-nowrap">PRO</button>
               : <button onClick={() => setPro({ gb: 10 })} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold bg-ember text-ink hover:brightness-110 transition whitespace-nowrap">Pro<span className="hidden sm:inline"> Upgrade</span></button>}
@@ -2302,7 +2305,7 @@ function App() {
                   </span>
                   <div className="font-display text-[22px] font-bold">Your vault is locked</div>
                   <div className="text-mute text-[13px] max-w-sm">Sign in to unlock it. Your files are decrypted only in this browser, after you sign in.</div>
-                  <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press mt-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold bg-fg text-ink hover:opacity-90 transition">Sign in</button>
+                  <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press mt-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-grad transition">Sign in</button>
                 </div>
               )}
           </div>
@@ -2311,8 +2314,8 @@ function App() {
             <Stepper labels={flow.map(id => LABELS[id])} idx={idx} maxIdx={maxIdx} onJump={(i) => go(flow[i])} />
 
             <div key={step} className={dir === 'back' ? 'step-back' : 'step-fwd'}>
-              <div className="label text-ember">{eyebrow}</div>
-              <h1 className="font-display text-[30px] sm:text-[40px] font-bold leading-[1.1] mt-2">{title}</h1>
+              <div className="label"><span className="grad-text">{eyebrow}</span></div>
+              <h1 className="font-display text-[30px] sm:text-[40px] font-bold leading-[1.1] mt-2">{title.slice(0, title.lastIndexOf(' ') + 1)}<span className="grad-text">{title.slice(title.lastIndexOf(' ') + 1)}</span></h1>
               <p className="text-mute text-[14px] mt-2">{sub}</p>
             </div>
 
@@ -2321,10 +2324,10 @@ function App() {
               <div key="s1" className="stagger grid sm:grid-cols-2 gap-4">
                 <ChoiceCard id="choose-paste" title="Text or code" sub="A message, a login, private notes or a code snippet."
                   examples={['Wi-Fi password', 'a login', 'private notes', 'code']} onClick={() => choose('paste')} i={0}
-                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ember)" strokeWidth="1.7"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
+                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
                 <ChoiceCard id="choose-file" title="A file" sub="Documents, images, archives. Up to 25 MB."
-                  examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1}
-                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" strokeWidth="1.7"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>} />
+                  examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1} t1="var(--cyan)" t2="var(--violet)"
+                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>} />
                 <p className="sm:col-span-2 text-[12.5px] text-mute text-center" style={{ '--i': 3 }}>{FEATURES.vaultFiles && <>Want to keep files instead? <button onClick={() => setView('vault')} className="text-fg underline underline-offset-2 hover:text-ember">Open your vault</button> · </>}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button></p>
               </div>
             )}
@@ -2465,7 +2468,7 @@ function App() {
                 <div className="flex gap-3">
                   <BackBtn />
                   <button id="next" onClick={next}
-                    className={`press flex-1 rounded-xl py-3 font-semibold text-[15px] transition-all duration-300 ${hasContent ? 'bg-fg text-ink hover:opacity-90' : 'bg-panel text-mute border border-line'}`}>
+                    className={`press flex-1 rounded-xl py-3 font-semibold text-[15px] transition-all duration-300 ${hasContent ? 'btn-grad' : 'bg-panel text-mute border border-line'}`}>
                     Next →
                   </button>
                 </div>
@@ -2482,24 +2485,27 @@ function App() {
                   <button onClick={() => go('content')} className="text-[12.5px] text-ember hover:underline shrink-0">Edit</button>
                 </div>
 
-                <div className="rounded-2xl border border-line bg-panel p-4 sm:p-5">
+                <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--ember)', '--t2': 'var(--gold)' }}>
                   <div className="label mb-3">Expiration</div>
                   <div className="grid sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Expiration">
                     {EXPIRY.map(o => (
-                      <button key={o.id} id={`exp-${o.id}`} role="radio" aria-checked={expiry === o.id} onClick={() => setExpiry(o.id)}
-                        className={`press flex items-start gap-3 text-left rounded-xl px-3 py-3 border transition-all duration-300 ${expiry === o.id ? 'border-ember bg-[var(--ember-soft)]' : 'border-line hover:border-mute'}`}>
-                        <span className={`mt-1 w-3.5 h-3.5 rounded-full border-2 shrink-0 transition-all duration-300 ${expiry === o.id ? 'border-ember bg-ember shadow-[inset_0_0_0_2px_var(--panel)] scale-110' : 'border-mute'}`} />
+                      <button key={o.id} id={`exp-${o.id}`} role="radio" aria-checked={expiry === o.id} onClick={() => setExpiry(o.id)} style={{ '--t1': EXPIRY_TONE[o.id] }}
+                        className="press tone-opt flex items-start gap-3 text-left rounded-xl px-3 py-3 border transition-all duration-300">
+                        <span className="tone-dot mt-1 w-3.5 h-3.5 rounded-full border-2 shrink-0 transition-all duration-300" />
                         <span><span className="block text-[13.5px] font-semibold">{o.label}</span><span className="block text-[12px] text-mute">{o.sub}</span></span>
                       </button>
                     ))}
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-line bg-panel p-4 sm:p-5">
+                <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--pink)', '--t2': 'var(--violet)' }}>
                   <div className="flex items-center justify-between gap-3">
-                    <div>
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 text-pink shrink-0" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+                      <div>
                       <div className="text-[13.5px] font-semibold">Password + lockout</div>
                       <div className="text-[12px] text-mute">Wrong guesses destroy the link</div>
+                      </div>
                     </div>
                     <Toggle id="pw-toggle" label="Password and lockout" on={pwOn} onChange={setPwOn} />
                   </div>
@@ -2516,7 +2522,7 @@ function App() {
                         <div className="flex gap-1 p-0.5 rounded-lg bg-well border border-line" role="radiogroup" aria-labelledby="att-label">
                           {[1, 3, 5, 10].map(n => (
                             <button key={n} id={`att-${n}`} role="radio" aria-checked={maxAttempts === n} onClick={() => setMaxAttempts(n)}
-                              className={`w-8 py-1 rounded-md font-mono text-[12px] tabular transition-colors ${maxAttempts === n ? 'bg-ember text-ink font-semibold' : 'text-mute hover:text-fg'}`}>{n}</button>
+                              className={`w-8 py-1 rounded-md font-mono text-[12px] tabular transition-colors ${maxAttempts === n ? 'grad-bg on-grad font-semibold' : 'text-mute hover:text-fg'}`}>{n}</button>
                           ))}
                         </div>
                         <span className="text-[12.5px] text-mute">wrong tries</span>
@@ -2525,7 +2531,7 @@ function App() {
                   )}
                 </div>
 
-                <div className="rounded-2xl border border-line bg-panel p-4 sm:p-5">
+                <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--cyan)', '--t2': 'var(--violet)' }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-start gap-3">
                       <span className="mt-0.5 text-cyan shrink-0">{QR_ICON}</span>
@@ -2543,8 +2549,8 @@ function App() {
                 <div className="flex gap-3">
                   <BackBtn />
                   <button id="create" onClick={create} disabled={busy}
-                    className={`press flex-1 rounded-xl py-3.5 px-5 bg-ember text-ink font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
-                    {busy ? <><span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />Encrypting…</> : 'Create Secure Link'}
+                    className={`press flex-1 rounded-xl py-3.5 px-5 btn-grad font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
+                    {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />Encrypting…</> : 'Create Secure Link'}
                   </button>
                 </div>
                 <p className="text-[11.5px] text-mute text-center">Free · anonymous · no account · lockout included</p>
