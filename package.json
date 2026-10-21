@@ -6,9 +6,10 @@
   "scripts": {
     "dev": "vite",
     "dev:worker": "npm run build && wrangler dev",
-    "build": "vite build",
+    "build": "vite build && node scripts/postbuild.mjs",
     "test": "node --test test/worker.test.mjs",
-    "deploy": "npm run build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy",
+    "verify": "node scripts/verify.mjs"
   },
   "dependencies": {
     "@fontsource-variable/bricolage-grotesque": "^5.1.0",

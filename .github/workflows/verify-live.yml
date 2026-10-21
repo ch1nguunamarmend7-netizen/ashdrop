@@ -1,0 +1,46 @@
+# Every hour, rebuild the commit the live site says it runs and compare every file byte for byte.
+# If ashdrop.cc ever serves anything that is not this public code, this check turns red,
+# publicly, on the repository's Actions tab.
+name: Verify live site
+
+on:
+  schedule:
+    - cron: '17 * * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  SITE: https://ashdrop.cc
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Which commit does the site say it runs?
+        id: live
+        run: |
+          commit=$(curl -fsS "$SITE/build.json" | python3 -c 'import sys, json; print(json.load(sys.stdin)["commit"])')
+          echo "Live site reports commit $commit"
+          echo "commit=$commit" >> "$GITHUB_OUTPUT"
+
+      - name: Check out that commit (fails if it is not public)
+        run: git checkout --quiet "${{ steps.live.outputs.commit }}"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Build it ourselves
+        run: npm ci && npm run build
+        env:
+          GITHUB_SHA: ${{ steps.live.outputs.commit }}
+
+      - name: Compare with the live site
+        run: node scripts/verify.mjs "$SITE"

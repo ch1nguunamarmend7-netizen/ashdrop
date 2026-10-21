@@ -1,2 +1,6 @@
-# Auto detect text files and perform LF normalization
-* text=auto
+# Same line endings on every computer (LF), so a build on Windows, Mac or Linux produces
+# byte-identical files. Build verification depends on this.
+* text=auto eol=lf
+*.png binary
+*.woff binary
+*.woff2 binary

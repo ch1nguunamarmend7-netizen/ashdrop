@@ -248,6 +248,28 @@ function Contact() {
 }
 
 
+/* Which commit is this site running? Read from /build.json, which every build writes. */
+function BuildInfo() {
+  const [b, setB] = useState(null);
+  useEffect(() => {
+    let alive = true;
+    fetch('/build.json', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then(j => alive && setB(j || false)).catch(() => alive && setB(false));
+    return () => { alive = false; };
+  }, []);
+  if (b === null) return <span className="text-mute">checking…</span>;
+  if (!b || !b.commit || b.commit === 'unknown') return <span className="text-warn">no build fingerprint found on this server</span>;
+  const short = b.commit.slice(0, 7);
+  return (
+    <span className="inline-flex flex-wrap items-center gap-2">
+      {SITE.sourceUrl
+        ? <a href={`${SITE.sourceUrl}/commit/${b.commit}`} target="_blank" rel="noopener noreferrer" className="font-mono text-fg underline underline-offset-4 decoration-ember/60 hover:decoration-ember">{short}</a>
+        : <span className="font-mono text-fg">{short}</span>}
+      {b.dirty && <span className="text-warn">(built with uncommitted changes, so it cannot be verified)</span>}
+      <span className="text-mute">· {Object.keys(b.files || {}).length} files fingerprinted</span>
+    </span>
+  );
+}
+
 function Security() {
   const src = SITE.sourceUrl;
   return (
@@ -284,7 +306,22 @@ function Security() {
           : <>The link to the code will appear here once it is published.</>}
       </P>
 
-      <H>Check it yourself</H>
+      <H id="verify">Check that this site runs the public code</H>
+      <P>Open code only helps if the site really runs it. So Ashdrop is built and deployed only by GitHub, in public, and every deploy is checkable:</P>
+      <UL>
+        <li><span className="text-fg">Fingerprints.</span> Every build publishes a SHA-256 fingerprint of every file at <span className="font-mono text-fg">/build.json</span>, and the page tells your browser the exact fingerprint of each script, so the browser refuses any script that was changed.</li>
+        <li><span className="text-fg">Signed builds.</span> GitHub signs a public record saying which commit produced which files.</li>
+        <li><span className="text-fg">An hourly public check.</span> Every hour GitHub rebuilds the code the site says it runs and compares every file byte for byte. The result is public on the repository's Actions tab.</li>
+        <li><span className="text-fg">Your own check.</span> Anyone can rebuild the same commit and compare it with the live site in one command (instructions in the README).</li>
+      </UL>
+      <P>This site is running commit <BuildInfo /></P>
+      <P>
+        One honest limit: these checks catch any change served to everyone, but a check run from one place cannot prove
+        what a different visitor was sent at a different moment. Browser extensions that verify every page load are the
+        next step for that, and we will support them as they mature.
+      </P>
+
+      <H>Check the encryption yourself</H>
       <P>You do not have to take our word for it. Open your browser's developer tools (F12), go to the Network tab, and create a link:</P>
       <UL>
         <li>The upload contains scrambled bytes, never your text or your password.</li>

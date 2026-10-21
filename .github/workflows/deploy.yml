@@ -1,0 +1,53 @@
+# Production deploys happen here, never from a laptop. Every deploy:
+#   1. builds the exact commit you pushed, after the tests pass,
+#   2. signs a public attestation (Sigstore) saying "these files were built from this commit by this workflow",
+#   3. uploads to Cloudflare.
+# Anyone can then check the live files with:  gh attestation verify <file> -R <owner>/ashdrop
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write      # needed to sign the attestation
+  attestations: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - run: npm ci
+      - run: npm test
+      - run: npm run build
+
+      - name: Sign what was built
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: 'dist/**'
+
+      - name: Keep the build manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-manifest-${{ github.sha }}
+          path: dist/build.json
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: deploy

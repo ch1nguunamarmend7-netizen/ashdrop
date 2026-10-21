@@ -55,7 +55,7 @@ export default {
       res = await env.ASSETS.fetch(request);
       res = new Response(res.body, res);
       if (url.pathname.startsWith('/p/')) res.headers.set('Cache-Control', 'no-store');
-      if ((res.headers.get('content-type') || '').includes('text/html')) res = withPreviewTags(res, url);
+      if (url.pathname === '/build.json') res.headers.set('Cache-Control', 'no-cache');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
     return res;
@@ -76,24 +76,8 @@ function securityTxt(origin) {
   ].join('\n');
 }
 
-// Link previews (chat apps, social sites) need absolute URLs, and a secret link should preview
-// as "someone sent you a secret" without revealing anything. Previews never see the key:
-// apps do not send the part after # when they fetch a page.
-function withPreviewTags(res, url) {
-  if (typeof HTMLRewriter === 'undefined') return res; // not available in plain Node tests
-  const secret = url.pathname.startsWith('/p/');
-  const set = (value) => ({ element(el) { el.setAttribute('content', value); } });
-  let rw = new HTMLRewriter()
-    .on('meta[property="og:image"]', set(`${url.origin}/og.png`))
-    .on('meta[property="og:url"]', set(secret ? url.origin : `${url.origin}${url.pathname}`));
-  if (secret) {
-    rw = rw
-      .on('meta[property="og:title"]', set('Someone sent you a secret'))
-      .on('meta[property="og:description"]', set('End-to-end encrypted with Ashdrop. It may only open once, so open it when you are ready to read it.'))
-      .on('title', { element(el) { el.setInnerContent('Someone sent you a secret · Ashdrop'); } });
-  }
-  return rw.transform(res);
-}
+// Pages are served exactly as built, never rewritten, so anyone can compare them with the
+// published build fingerprints (see scripts/verify.mjs). Link previews use the static tags in index.html.
 
 async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'p', id?, action?]

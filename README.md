@@ -21,6 +21,9 @@ index.html, src/        React + Tailwind frontend (Vite)
 worker/index.js         API routes, security headers, serves dist/
 worker/link.js          one Durable Object per link: attempt counter, burn, expiry
 test/                   API tests that run in plain Node
+scripts/postbuild.mjs   integrity hashes + build.json after every build
+scripts/verify.mjs      compares a live site with build.json and with your own build
+.github/workflows/      deploy (with signed build attestation) and the hourly live check
 wrangler.toml           Cloudflare config (R2 bucket, Durable Object, static assets)
 ```
 
@@ -64,6 +67,54 @@ The app ships with no sample data: the vault and the folder list start empty.
 | Sign in / sign out | A toggle | An auth service (passkeys or email + password with an SRP/OPAQUE-style login) |
 | Recovery key | Generated and shown, not yet tied to a vault key | Wrap the vault key with it at sign-up |
 | Pro plan and cancel | A toggle | Stripe Checkout + Customer Portal, webhook updates the plan |
+
+## Verify that the live site runs this code
+
+Every build writes `dist/build.json` (the commit plus a SHA-256 of every file) and adds integrity
+hashes to `index.html`, so browsers refuse any script or stylesheet that was changed. Pages are served
+byte-for-byte as built; the Worker never rewrites them.
+
+**Check it yourself** (needs Node 20+ and Git):
+
+```bash
+git clone https://github.com/ch1nguunamarmend7-netizen/ashdrop && cd ashdrop
+npm run verify -- https://ashdrop.cc        # step 1, and prints the commit the site runs
+git checkout <that commit>
+npm ci && npm run build
+npm run verify -- https://ashdrop.cc        # step 2: compares every live file with your own build
+```
+
+**Check the signature** that GitHub made when it built the files (needs the GitHub CLI):
+
+```bash
+curl -sL https://ashdrop.cc/ -o index.html
+gh attestation verify index.html -R ch1nguunamarmend7-netizen/ashdrop
+```
+
+**Hourly public check:** `.github/workflows/verify-live.yml` rebuilds the commit the site reports and
+compares every file. Its results are public on the repository's Actions tab.
+
+What this cannot prove: a check run from one place shows what the site serves to everyone, not what a
+single visitor was sent at one moment. Closing that gap needs a browser extension that checks every page load.
+
+## Deploying (GitHub Actions)
+
+Production deploys run from `.github/workflows/deploy.yml` on every push to `main`: tests, build,
+signed attestation, then `wrangler deploy`. Do not deploy from a laptop, or the hourly check turns red.
+
+One-time setup:
+
+1. Cloudflare dashboard → **My Profile → API Tokens → Create Token** → use the **Edit Cloudflare
+   Workers** template, limited to your account. If a deploy fails with a permission error about R2 or
+   Durable Objects, edit the token and add that permission.
+2. Copy your **Account ID** (Workers & Pages overview page, right side).
+3. GitHub repo → **Settings → Secrets and variables → Actions → New repository secret**:
+   `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+4. Push to `main` (or run the workflow from the Actions tab). The `ADMIN_TOKEN` secret you set with
+   wrangler stays on the Worker across deploys.
+
+In the Cloudflare zone settings, keep **Rocket Loader** and **Email Address Obfuscation** off: they
+rewrite pages, which would break the integrity hashes and the byte-for-byte check.
 
 ## Run it locally
 
@@ -129,7 +180,8 @@ attempts per IP per minute, plus Workers Logs. Change the numbers there if real 
 - [ ] Check the contact email in `src/site.js` is right and that you can receive mail there.
 - [ ] `npx wrangler secret put ADMIN_TOKEN`
 - [ ] `npm audit`, update what it flags, then `npm test` and `npm run dev:worker` again.
-- [ ] `npm run deploy`, add the custom domain, and test from two phones on the real address.
+- [ ] Add the two GitHub secrets (see "Deploying"), push, and check the Actions tab is green.
+- [ ] Add the custom domain, and test from two phones on the real address.
 - [ ] Paste a link into a chat app and check the preview card shows (and the link still works after).
 
 ## Security rules for anyone changing this code
