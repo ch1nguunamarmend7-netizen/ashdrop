@@ -287,12 +287,14 @@ function Security() {
         <li>The key is the part of the link after the #. Browsers never send that part to any server, so we never have it.</li>
         <li>A password adds a second layer. The server only stores a one-way check value, and after the number of wrong tries you choose, the link is deleted.</li>
         <li>Burn links are deleted from the server in the same step that hands them out, so they can only be opened once.</li>
+        <li>A typeable code (4 words) is turned into a lookup value and a key in your browser. The server stores only a hash of the lookup value and the link key locked with the code, so it cannot tell which code belongs to which link, and tries are limited per network.</li>
         <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
       </UL>
 
       <H>What it cannot protect against</H>
       <UL>
         <li><span className="text-fg">Anyone who has the full link can open it.</span> If you send it through email or a chat app, that company stores the link. Add a password and send it a different way.</li>
+        <li><span className="text-fg">A typeable code is weaker than a full link.</span> 4 words are about 44 bits, against 256 for a link. That is plenty against people guessing online, but someone holding a copy of our stored data and a lot of computing power could eventually try every code. Codes die with their link, and a password closes that gap, so add one for anything very sensitive.</li>
         <li>Once someone opens a secret, it is on their screen. We cannot stop screenshots or copies.</li>
         <li>A phone or computer with malware on it. No website can protect against that.</li>
         <li>You have to trust that the code this site sends you is honest. That is true of every web app, which is why Ashdrop is open source: you can read exactly what it does.</li>

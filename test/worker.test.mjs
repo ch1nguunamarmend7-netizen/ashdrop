@@ -172,3 +172,66 @@ test('security.txt is served with a contact and a future expiry', async () => {
   assert.ok(exp > Date.now() + 90 * 864e5 && exp < Date.now() + 366 * 864e5);
   assert.match(t, /^Policy: https:\/\/ashdrop\.test\/security$/m);
 });
+
+// ---------- typeable codes ----------
+async function createWithCode(env, lookup, opts = {}) {
+  const meta = { expiry: opts.expiry || 'burn', iv: b64(rand(12)), code: { lookup, wrapped: b64(rand(48)), wrapIv: b64(rand(12)) } };
+  const res = await call(env, '/api/p', { method: 'POST', headers: { 'x-ashdrop-meta': JSON.stringify(meta) }, body: rand(32) });
+  return { res, body: await res.json(), meta };
+}
+const lookupCode = (env, lookup) => call(env, '/api/code', { method: 'POST', body: JSON.stringify({ lookup }) });
+
+test('code: finds its link and returns only the wrapped key', async () => {
+  const env = makeEnv();
+  const lookup = b64(rand(32));
+  const { res, body, meta } = await createWithCode(env, lookup);
+  assert.equal(res.status, 201);
+  const r = await lookupCode(env, lookup);
+  assert.equal(r.status, 200);
+  const got = await r.json();
+  assert.deepEqual(got, { id: body.id, wrapped: meta.code.wrapped, wrapIv: meta.code.wrapIv });
+  assert.equal(JSON.stringify(got).includes(lookup), false, 'lookup value is not echoed');
+  // Looking it up does not use up a burn link.
+  const open = await call(env, `/api/p/${body.id}/open`, { method: 'POST', body: '{}' });
+  assert.equal(open.status, 200);
+});
+
+test('code: unknown code is 404; dead link makes the code disappear', async () => {
+  const env = makeEnv();
+  assert.equal((await lookupCode(env, b64(rand(32)))).status, 404);
+  const lookup = b64(rand(32));
+  const { body } = await createWithCode(env, lookup);
+  await call(env, `/api/p/${body.id}/open`, { method: 'POST', body: '{}' }); // burns it
+  const r = await lookupCode(env, lookup);
+  assert.equal(r.status, 410);
+  assert.equal((await r.json()).reason, 'burned');
+  assert.equal((await lookupCode(env, lookup)).status, 404, 'code record dropped');
+});
+
+test('code: a code already in use is refused and the new link is undone', async () => {
+  const env = makeEnv();
+  const lookup = b64(rand(32));
+  await createWithCode(env, lookup);
+  const { res, body } = await createWithCode(env, lookup);
+  assert.equal(res.status, 409);
+  assert.equal(body.error, 'code_taken');
+  assert.equal(env._blobs.size, 1, 'second ciphertext deleted');
+});
+
+test('code: bad input and expiry', async () => {
+  const env = makeEnv();
+  assert.equal((await lookupCode(env, 'short')).status, 400);
+  const bad = { expiry: 'burn', iv: b64(rand(12)), code: { lookup: 'x', wrapped: 'y', wrapIv: 'z' } };
+  assert.equal((await call(env, '/api/p', { method: 'POST', headers: { 'x-ashdrop-meta': JSON.stringify(bad) }, body: rand(8) })).status, 400);
+  const lookup = b64(rand(32));
+  await createWithCode(env, lookup, { expiry: '1h' });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 2 * 3600e3;
+  try { assert.equal((await lookupCode(env, lookup)).status, 404); } finally { Date.now = realNow; }
+});
+
+test('code: lookups are rate limited', async () => {
+  const env = makeEnv();
+  env.CODE_LIMITER = { limit: async () => ({ success: false }) };
+  assert.equal((await lookupCode(env, b64(rand(32)))).status, 429);
+});

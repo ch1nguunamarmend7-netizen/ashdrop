@@ -9,8 +9,9 @@ async function readError(res) {
 }
 
 /** Upload a sealed payload. Returns { id, ownerToken, expiresAt }. */
-export async function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAttempts }) {
+export async function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAttempts, code = null }) {
   const meta = { expiry, iv: b64url(iv) };
+  if (code) meta.code = code; // { lookup, wrapped, wrapIv } from sealCode()
   if (authToken) Object.assign(meta, { maxAttempts, salt: b64url(salt), iv2: b64url(iv2), authToken: b64url(authToken) });
   const res = await fetch(BASE, {
     method: 'POST',
@@ -19,6 +20,7 @@ export async function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAtte
   });
   if (res.status === 413) throw new Error('That is too large for a free link (25 MB).');
   if (res.status === 429) throw new Error('Too many links in a short time. Wait a minute and try again.');
+  if (res.status === 409) { const e = new Error('code_taken'); e.code = 'code_taken'; throw e; }
   if (!res.ok) throw new Error(`Could not create the link: ${await readError(res)}`);
   return res.json();
 }
@@ -64,4 +66,13 @@ export async function linkStatus(id, ownerToken) {
   const res = await fetch(`${BASE}/${id}/status`, { headers: { authorization: `Bearer ${ownerToken}` } });
   if (!res.ok) return { state: 'unknown' };
   return res.json();
+}
+
+/** Find the link a typed code belongs to. Returns { status: 'ok', id, wrapped, wrapIv } or a reason. */
+export async function lookupCode(lookup) {
+  const res = await fetch('/api/code', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ lookup }) });
+  if (res.ok) return { status: 'ok', ...(await res.json()) };
+  if (res.status === 429) return { status: 'rate_limited' };
+  const body = await res.json().catch(() => ({}));
+  return { status: res.status === 410 ? 'gone' : 'not_found', reason: body.reason };
 }

@@ -41,6 +41,13 @@ namespace_id = "41002"
   limit = 60      # open attempts per minute (each link also has its own password lockout)
   period = 60
 
+[[ratelimits]]
+name = "CODE_LIMITER"
+namespace_id = "41003"
+  [ratelimits.simple]
+  limit = 20      # code lookups per minute (each wrong code is a guess, so keep this tight)
+  period = 60
+
 # Workers Logs: request method, URL path, status and errors, kept 3 days (Free) or 7 days (Paid).
 # The key is never in a URL the server sees, and the Worker never logs request bodies.
 [observability]

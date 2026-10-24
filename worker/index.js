@@ -82,6 +82,7 @@ function securityTxt(origin) {
 async function handleApi(request, env, url) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'p', id?, action?]
   if (parts[1] === 'admin') return handleAdmin(request, env, parts);
+  if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
 
   if (parts.length === 2 && request.method === 'POST') return createLink(request, env);
@@ -111,12 +112,15 @@ async function createLink(request, env) {
 
   let meta;
   try { meta = JSON.parse(request.headers.get('x-ashdrop-meta') || ''); } catch { return json({ error: 'bad_meta' }, 400); }
-  const { expiry, maxAttempts = null, salt = null, iv, iv2 = null, authToken = null } = meta || {};
+  const { expiry, maxAttempts = null, salt = null, iv, iv2 = null, authToken = null, code = null } = meta || {};
   if (!(expiry in EXPIRY_MS)) return json({ error: 'bad_expiry' }, 400);
   if (!isB64(iv, 16)) return json({ error: 'bad_iv' }, 400);
   const pw = authToken !== null;
   if (pw && (!ATTEMPTS.includes(maxAttempts) || !isB64(salt, 22) || !isB64(iv2, 16) || !isB64(authToken, 43))) {
     return json({ error: 'bad_password_layer' }, 400);
+  }
+  if (code !== null && (!isB64(code?.lookup, 43) || !isB64(code?.wrapped, 64) || !isB64(code?.wrapIv, 16))) {
+    return json({ error: 'bad_code' }, 400);
   }
 
   const declared = Number(request.headers.get('content-length') || 0);
@@ -145,8 +149,44 @@ async function createLink(request, env) {
     await env.BLOBS.delete(`p/${id}`);
     return json({ error: 'create_failed' }, 500);
   }
+  if (code) {
+    const codeStub = env.LINKS.get(env.LINKS.idFromName(await codeName(code.lookup)));
+    const made = await codeStub.fetch('https://link/code-init', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ linkId: id, wrapped: code.wrapped, wrapIv: code.wrapIv, expiresAt }),
+    });
+    if (!made.ok) {
+      // Another live link already uses this code (about 1 in 17 trillion). Undo, and let the browser pick a new code.
+      await stub.fetch('https://link/remove', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+      await env.BLOBS.delete(`p/${id}`);
+      return json({ error: 'code_taken' }, 409);
+    }
+  }
   return json({ id, ownerToken, expiresAt }, 201);
 }
+
+// POST /api/code   body: { lookup }
+// Finds the link a code belongs to. Returns its id and the wrapped key; only the code can unwrap it.
+// Guessing is slow on purpose: each guess costs the guesser 310,000 PBKDF2 rounds, and the limiter caps tries per address.
+async function lookupCode(request, env) {
+  if (!(await allowed(env.CODE_LIMITER || env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  const { lookup } = await request.json().catch(() => ({}));
+  if (!isB64(lookup, 43)) return json({ error: 'bad_code' }, 400);
+  const codeStub = env.LINKS.get(env.LINKS.idFromName(await codeName(lookup)));
+  const got = await codeStub.fetch('https://link/code-get', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+  if (!got.ok) return json({ error: 'not_found' }, 404);
+  const { linkId, wrapped, wrapIv } = await got.json();
+  // A code is only useful while its link is alive. If the link was burned or revoked, forget the code too.
+  const meta = await env.LINKS.get(env.LINKS.idFromName(linkId)).fetch('https://link/meta');
+  if (!meta.ok) {
+    const { reason } = await meta.json().catch(() => ({}));
+    await codeStub.fetch('https://link/code-drop', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
+    return json({ error: 'gone', reason: reason || 'gone' }, 410);
+  }
+  return json({ id: linkId, wrapped, wrapIv });
+}
+
+const codeName = async (lookup) => 'code:' + (await sha256b64(lookup));
 
 // POST /api/p/:id/open   body: { authToken? }
 async function openLink(request, env, id, call) {

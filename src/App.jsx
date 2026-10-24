@@ -3,7 +3,9 @@ import React, { useState, useRef, useMemo, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import qrcode from 'qrcode-generator';
 import { enc, hex, fmtBytes, sealPayload, derivePasswordKeys, pack, unpack, openPayload } from './lib/crypto.js';
-import { createLink, getMeta, openLink, revokeLink, linkStatus } from './lib/api.js';
+import { createLink, getMeta, openLink, revokeLink, linkStatus, lookupCode } from './lib/api.js';
+import { generateCode, parseCode, sealCode, openCode, CODE_WORDS } from './lib/code.js';
+import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL } from './lib/bundle.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
 
@@ -184,6 +186,37 @@ function QR({ text, size = 200, className = '' }) {
   );
 }
 
+const KEYBOARD_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>;
+const WORD_COLORS = ['var(--ember)', 'var(--pink)', 'var(--violet)', 'var(--cyan)'];
+
+/* The 4 words of a typeable code, each in its own color so they are easy to read out loud. */
+function CodeWords({ code, size = 'lg' }) {
+  return (
+    <div className={`flex flex-wrap justify-center ${size === 'lg' ? 'gap-2' : 'gap-1.5'}`} aria-label={`Code: ${code.split('-').join(' ')}`}>
+      {code.split('-').map((w, i) => (
+        <span key={i} style={{ '--t1': WORD_COLORS[i % 4] }}
+          className={`tone-chip border rounded-lg font-mono font-semibold ${size === 'lg' ? 'text-[17px] sm:text-[19px] px-3 py-1.5' : 'text-[12px] px-2 py-0.5'}`}>
+          <span className="opacity-60 font-normal text-[0.7em] mr-1">{i + 1}</span>{w}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+/* Shown after creating a link with a code. */
+function CodeCard({ code, password }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => { try { await navigator.clipboard.writeText(code.split('-').join(' ')); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch {} };
+  return (
+    <div id="code-card" className="tone-top mt-3 rounded-xl bg-well border border-line p-4 flex flex-col items-center gap-3 text-center" style={{ '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}>
+      <div className="label flex items-center gap-1.5"><span className="text-gold">{KEYBOARD_ICON}</span>Or open it with this code</div>
+      <CodeWords code={code} />
+      <div className="text-[12.5px] text-mute max-w-sm">On the other device, go to <span className="font-mono text-fg">{location.host}/code</span> and type these 4 words. The first 4 letters of each word are enough.{password && ' The password is still needed.'}</div>
+      <button onClick={copy} className="press rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold border border-line hover:border-gold hover:text-gold transition-colors">{copied ? 'Copied' : 'Copy code'}</button>
+    </div>
+  );
+}
+
 const QR_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M17 21h4v-4M14 21v-3"/></svg>;
 
 /* A big, bright QR code that fills the screen, for scanning across a table or a room.
@@ -234,6 +267,85 @@ function LocalOnlyNote({ className = '' }) {
     </div>
   );
 }
+
+/* ---------- open with a code (ashdrop.cc/code) ---------- */
+export function CodePage() {
+  const [input, setInput] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [shakeKey, setShakeKey] = useState(0);
+  const { words, code } = parseCode(input);
+  const slots = Array.from({ length: CODE_WORDS }, (_, i) => words[i] || null);
+  const tooMany = words.length > CODE_WORDS;
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!code || busy) return;
+    if (!crypto?.subtle) { setMsg('This browser does not expose Web Crypto here. Open the page over HTTPS.'); return; }
+    setBusy(true); setMsg('');
+    try {
+      const { lookup, unwrap } = await openCode(code);
+      const r = await lookupCode(lookup);
+      if (r.status === 'ok') {
+        const key = await unwrap(r.wrapped, r.wrapIv);
+        // Same hand-off as a link: the key goes into this tab's sessionStorage, never into the address bar.
+        try { sessionStorage.setItem(`ashdrop.k.${r.id}`, key); } catch {}
+        location.assign(`/p/${r.id}`);
+        return;
+      }
+      setShakeKey(k => k + 1);
+      setMsg(r.status === 'rate_limited' ? 'Too many tries from this network. Wait a minute, then try again.'
+        : r.status === 'gone' ? `That code belonged to a link that is gone (${GONE_WHY[r.reason] || 'no longer available'}). Ask the sender for a new one.`
+        : 'No live link has that code. Check the words. It may also have expired or already been opened.');
+    } catch (err) { setMsg('Could not open it: ' + err.message); }
+    setBusy(false);
+  };
+
+  return (
+    <div className="min-h-full flex flex-col">
+      <div className="relative head-glow gutter max-w-6xl w-full mx-auto py-3 flex items-center gap-3 border-b border-transparent">
+        <a href="/" aria-label="Ashdrop home"><Logo /></a>
+        <a href="/" className="press ml-auto shrink-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line text-mute hover:text-fg hover:border-mute transition-colors">Send your own secret</a>
+      </div>
+      <main className="flex-1 gutter py-10 sm:py-16">
+        <form key={shakeKey} onSubmit={submit} className={`pop tone-top relative w-full max-w-xl mx-auto rounded-3xl border border-line bg-panel p-6 sm:p-8 flex flex-col gap-5 ${shakeKey ? 'shake' : ''}`}
+          style={{ '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}>
+          <div className="flex flex-col items-center text-center gap-3">
+            <span className="tone-icon w-14 h-14 rounded-2xl grid place-items-center" aria-hidden="true">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
+            </span>
+            <div className="label"><span className="grad-text">Open with a code</span></div>
+            <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">Type the 4 <span className="grad-text">words</span></h1>
+            <p className="text-mute text-[13.5px] max-w-sm">In order, with spaces or dashes. The first 4 letters of each word are enough.</p>
+          </div>
+          <div>
+            <label htmlFor="code-input" className="sr-only">Code</label>
+            <input id="code-input" autoFocus value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
+              placeholder="e.g. tiger orbit lamp river" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="go"
+              className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-gold text-center" />
+            <div className="grid grid-cols-4 gap-1.5 mt-3" aria-live="polite">
+              {slots.map((w, i) => (
+                <span key={i} style={{ '--t1': w?.word ? WORD_COLORS[i] : 'var(--warn)' }}
+                  className={`h-9 rounded-lg border font-mono text-[12.5px] grid place-items-center truncate px-1 transition-colors duration-300 ${!w ? 'border-dashed border-line text-mute' : 'tone-chip'}`}>
+                  {!w ? i + 1 : w.word ? w.word : `${w.typed}?`}
+                </span>
+              ))}
+            </div>
+            {tooMany && <div className="text-[12px] text-warn mt-2">That is more than 4 words.</div>}
+            {words.some(w => !w.word) && !tooMany && <div className="text-[12px] text-warn mt-2">A word with a ? is not in the list. Check its spelling.</div>}
+          </div>
+          {msg && <div role="alert" className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
+          <button id="code-open" disabled={!code || busy} className="press rounded-xl py-3.5 font-display font-bold text-[16px] btn-grad disabled:opacity-50 flex items-center justify-center gap-2">
+            {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />Finding it…</> : 'Open'}
+          </button>
+          <p className="text-[12px] text-mute text-center">Your browser turns the words into a lookup value and a key. The words themselves never leave this device, and nothing is opened until you confirm on the next screen.</p>
+        </form>
+      </main>
+      <Footer className="gutter pb-8 pt-2" />
+    </div>
+  );
+}
+const GONE_WHY = { burned: 'already opened', revoked: 'cancelled by the sender', expired: 'expired', locked: 'locked after wrong passwords', removed: 'removed' };
 
 /* ---------- output modal ---------- */
 function OutputModal({ result, onClose, onOpenRecipient }) {
@@ -292,6 +404,7 @@ function OutputModal({ result, onClose, onOpenRecipient }) {
         )}
         {fullQr && <QRFullscreen link={link} burn={result.expiry === 'burn'} onClose={() => setFullQr(false)} />}
       </div>
+      {result.code && <CodeCard code={result.code} password={result.password} />}
       <LocalOnlyNote className="mt-3" />
       <p className="text-[12.5px] text-mute mt-2">The <span className="text-cyan font-mono">#fragment</span> is the decryption key. Browsers never send it to a server, so Ashdrop cannot read this {result.kind}.</p>
 
@@ -403,7 +516,9 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
       const { header, content } = unpack(opened);
       const plain = content.slice().buffer;
       const { kind, name: fileName, mime, lang } = header;
-      if (kind === 'file') {
+      if (kind === 'files') {
+        setOut({ kind, items: unbundleFiles(header, content) });
+      } else if (kind === 'file') {
         const isImg = typeOf(fileName, mime) === 'image';
         setOut({ kind, fileName, mime, size: plain.byteLength, plain, url: isImg ? URL.createObjectURL(new Blob([plain], { type: mime || 'image/png' })) : null });
       } else setOut({ kind, lang: lang || 'Plain text', text: new TextDecoder().decode(plain) });
@@ -415,9 +530,9 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
   const reveal = () => { if (meta.needsPassword) setState('password'); else unlock(); };
   const burnNow = () => { setBurning(true); setTimeout(() => { setBurning(false); setOut(null); setState('burned'); }, dur(900)); };
   const copyText = async () => { try { await navigator.clipboard.writeText(out.text); setCopied(true); setTimeout(() => setCopied(false), 1800); } catch { setCopied('fail'); } };
-  const save = async () => {
+  const save = async (filename = out.fileName, data = out.plain) => {
     if (!dl) { setMsg('Saving files is not available in this browser.'); return; }
-    try { await dl.save({ filename: out.fileName, data: new Blob([out.plain]) }); }
+    try { await dl.save({ filename, data: data instanceof Blob ? data : new Blob([data]) }); }
     catch (e) { if (e?.code === 'rejected_extension') setMsg('Your browser blocked this download. Try again, or allow downloads for this site.'); else if (e?.code !== 'declined') setMsg('Saving is not available in this view.'); }
   };
 
@@ -437,7 +552,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
   }
   const m = meta || {};
   const pips = m.maxAttempts ? Array.from({ length: m.maxAttempts }, (_, i) => i < left) : [];
-  const what = out?.kind === 'file' ? 'file' : 'secret';
+  const what = out?.kind === 'file' ? 'file' : out?.kind === 'files' ? 'files' : 'secret';
   const fate = m.expiry === 'burn' ? 'burns after you open it' : `expires in ${timeLeft((m.expiresAt || 0) - Date.now())}`;
   const card = 'relative w-full max-w-xl mx-auto rounded-3xl border border-line bg-panel p-6 sm:p-8';
 
@@ -499,7 +614,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2 min-w-0">
                 <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: out.kind === 'paste' ? colorOf(out.lang) : 'var(--cyan)' }} aria-hidden="true" />
-                <span className="font-mono text-[12.5px] text-mute truncate">{out.kind === 'paste' ? `message${extOf(out.lang)}` : out.fileName}</span>
+                <span className="font-mono text-[12.5px] text-mute truncate">{out.kind === 'paste' ? `message${extOf(out.lang)}` : out.kind === 'files' ? `${out.items.length} files · ${fmtBytes(out.items.reduce((n, f) => n + f.size, 0))}` : out.fileName}</span>
               </div>
               <span className="label text-ok flex items-center gap-1.5"><span className="check-pop inline-block">✓</span>Decrypted here</span>
             </div>
@@ -509,6 +624,22 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
                   style={{ borderLeft: `3px solid ${colorOf(out.lang)}` }}>{out.text}</pre>
                 <button onClick={copyText} className={`press mt-3 w-full rounded-xl py-3 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'btn-grad'}`}>{copied === true ? 'Copied' : copied === 'fail' ? 'Select the text to copy it' : 'Copy text'}</button>
               </>
+            ) : out.kind === 'files' ? (
+              <>
+                <ul id="rec-files" className="stagger mt-4 flex flex-col gap-1.5 max-h-[50vh] overflow-y-auto">
+                  {out.items.map((f, i) => {
+                    const ts = TYPE_STYLE[typeOf(f.name, f.mime)];
+                    return (
+                      <li key={i} style={{ '--i': Math.min(i, 8) }} className="flex items-center gap-3 rounded-xl bg-well border border-line px-3 py-2.5">
+                        <span className="w-10 h-10 rounded-lg grid place-items-center font-mono text-[10px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }} aria-hidden="true">{ts.t}</span>
+                        <span className="min-w-0 flex-1"><span className="block font-mono text-[12.5px] truncate">{f.name}</span><span className="block text-mute text-[11.5px] tabular">{fmtBytes(f.size)}</span></span>
+                        <button onClick={() => save(f.name, f.data)} aria-label={`Download ${f.name}`} className="press shrink-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line hover:border-cyan hover:text-cyan transition-colors">Download</button>
+                      </li>
+                    );
+                  })}
+                </ul>
+                <button id="download-all" onClick={() => save('ashdrop-files.zip', makeZip(out.items))} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download all ({out.items.length} files, .zip)</button>
+              </>
             ) : (
               <>
                 {out.url
@@ -517,7 +648,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
                       {(() => { const ts = TYPE_STYLE[typeOf(out.fileName, out.mime)]; return <span className="w-12 h-12 rounded-xl grid place-items-center font-mono text-[11px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }}>{ts.t}</span>; })()}
                       <div className="min-w-0"><div className="font-mono text-[13px] break-all">{out.fileName}</div><div className="text-mute text-[12px] mt-0.5">{fmtBytes(out.size)} · decrypted intact</div></div>
                     </div>}
-                <button onClick={save} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download file</button>
+                <button onClick={() => save()} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download file</button>
               </>
             )}
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
@@ -1683,6 +1814,7 @@ function LinksPanel({ links, onRevoke, onOpen, onNew, refreshKey, onLock }) {
                       {live && <><span aria-hidden="true">·</span><span className="tabular">{l.expiry === 'burn' ? 'burns on open, ' : ''}{timeLeft(l.st.expiresAt - Date.now())} left</span></>}
                       {l.password && <><span aria-hidden="true">·</span><span>🔒{wrong ? ` ${wrong} wrong ${wrong === 1 ? 'try' : 'tries'}` : ''}</span></>}
                     </div>
+                    {l.code && live && <div className="mt-1.5 flex"><CodeWords code={l.code} size="sm" /></div>}
                   </div>
                   <span className={`shrink-0 inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-[11.5px] font-semibold ${st.cls}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${st.dot}`} aria-hidden="true" />{st.label}{l.st.state === 'opened' && l.st.opens > 1 ? ` ×${l.st.opens}` : ''}
@@ -2043,7 +2175,11 @@ function App() {
   const [kind, setKind] = useState(null); // 'paste' | 'file'
   const [text, setText] = useState('');
   const [lang, setLang] = useState('Bash');
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
+  const file = files[0] || null;                      // the first (or only) file
+  const setFile = (f) => setFiles(f ? [f] : []);      // replace everything with one file
+  const filesSize = files.reduce((n, f) => n + f.size, 0);
+  const filesLabel = files.length > 1 ? `${files.length} files` : file ? file.name : '';
   const [drag, setDrag] = useState(false);
   const [settings, setSettings] = useState(loadSettings);
   const [plan, setPlan] = useState({ tier: 'free' });
@@ -2053,6 +2189,7 @@ function App() {
   const [expiry, setExpiry] = useState(() => loadSettings().defaultExpiry);
   const [pwOn, setPwOn] = useState(() => loadSettings().defaultPw);
   const [qrOnly, setQrOnly] = useState(false);
+  const [codeOn, setCodeOn] = useState(false);
   const [pw, setPw] = useState('');
   const [maxAttempts, setMaxAttempts] = useState(() => loadSettings().defaultAttempts);
   const [recipientOf, setRecipientOf] = useState(null);
@@ -2147,11 +2284,11 @@ function App() {
   const fileInput = useRef(null);
 
   const lines = useMemo(() => text.split('\n').length, [text]);
-  const bytes = kind === 'file' ? (file?.size || 0) : enc.encode(text).length;
-  const hasContent = kind === 'file' ? !!file : !!text.trim();
+  const bytes = kind === 'file' ? filesSize : enc.encode(text).length;
+  const hasContent = kind === 'file' ? files.length > 0 : !!text.trim();
 
   const flow = kind === 'paste' ? ['type', 'format', 'content', 'protect'] : ['type', 'content', 'protect'];
-  const LABELS = { type: 'Type', format: 'Format', content: kind === 'file' ? 'File' : kind === 'paste' ? 'Text' : 'Content', protect: 'Protection' };
+  const LABELS = { type: 'Type', format: 'Format', content: kind === 'file' ? 'Files' : kind === 'paste' ? 'Text' : 'Content', protect: 'Protection' };
   const idx = flow.indexOf(step);
   const prev = flow[idx - 1];
   const go = (id, f = flow) => { setErr(''); setDir(f.indexOf(id) >= f.indexOf(step) ? 'fwd' : 'back'); setStep(id); setMaxIdx(m => Math.max(m, f.indexOf(id))); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
@@ -2169,16 +2306,25 @@ function App() {
     if (item.size - 16 > SHARE_LIMIT) { setErr(`${item.name} is ${fmtDec(item.size)}. Free links carry up to 25 MB.`); return; }
     try { setFile(await vaultItemToFile(item)); setErr(''); } catch (e) { setErr('Could not open that vault file: ' + e.message); }
   };
-  const startOver = () => { setDir('back'); setStep('type'); setMaxIdx(0); setKind(null); setText(''); setFile(null); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setErr(''); };
+  const startOver = () => { setDir('back'); setStep('type'); setMaxIdx(0); setKind(null); setText(''); setFile(null); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setCodeOn(false); setErr(''); };
 
-  const pickFile = (f) => {
-    if (!f) return;
-    if (f.size > 25 * 1024 * 1024) { setErr(`${f.name} is ${fmtBytes(f.size)}. The free tier accepts files up to 25 MB; Pro vaults go higher.`); return; }
-    setErr(''); setFile(f);
+  // Add files to the list. Everything together must stay under 25 MB.
+  const addFiles = (list) => {
+    const incoming = Array.from(list || []).filter(f => !files.some(g => g.name === f.name && g.size === f.size && g.lastModified === f.lastModified));
+    if (!incoming.length) return;
+    let next = [...files], skipped = [];
+    for (const f of incoming) {
+      if (next.length >= MAX_FILES) { skipped.push(`${f.name} (limit of ${MAX_FILES} files)`); continue; }
+      if (next.reduce((n, g) => n + g.size, 0) + f.size > MAX_TOTAL) { skipped.push(`${f.name} (${fmtBytes(f.size)})`); continue; }
+      next.push(f);
+    }
+    setFiles(next);
+    setErr(skipped.length ? `Not added, it would go over 25 MB in total: ${skipped.join(', ')}.` : '');
   };
+  const removeFile = (i) => { setFiles(fs => fs.filter((_, j) => j !== i)); setErr(''); };
 
   const next = () => {
-    if (!hasContent) return setErr(kind === 'file' ? 'Choose a file first, or drop one on the box.' : 'The editor is empty. Paste some text or code first.');
+    if (!hasContent) return setErr(kind === 'file' ? 'Add at least one file first, or drop some on the box.' : 'The editor is empty. Paste some text or code first.');
     go('protect');
   };
 
@@ -2188,16 +2334,27 @@ function App() {
     if (!crypto?.subtle) return setErr('This browser does not expose Web Crypto here. Open the page over HTTPS.');
     setBusy(true);
     try {
-      const content = kind === 'file' ? new Uint8Array(await file.arrayBuffer()) : enc.encode(text);
-      // Name, type and format are sealed inside the payload; the server sees only bytes.
-      const header = kind === 'file' ? { kind, name: file.name, mime: file.type || '' } : { kind, lang };
+      // Names, types and format are sealed inside the payload; the server sees only bytes.
+      let header, content;
+      if (kind === 'file' && files.length > 1) ({ header, content } = await bundleFiles(files));
+      else if (kind === 'file') { header = { kind, name: file.name, mime: file.type || '' }; content = new Uint8Array(await file.arrayBuffer()); }
+      else { header = { kind, lang }; content = enc.encode(text); }
       const sealed = await sealPayload(pack(header, content), pwOn ? pw : null);
-      const { id, ownerToken, expiresAt } = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null });
-      const label = kind === 'file' ? file.name : ((text.split('\n').find(l => l.trim()) || 'Untitled').trim().slice(0, 60));
-      const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label, expiry, password: pwOn, qrOnly, createdAt: Date.now() };
+      // Optional typeable code. On the tiny chance it is already taken, pick another one.
+      let code = null, created;
+      for (let tries = 0; ; tries++) {
+        code = codeOn ? generateCode() : null;
+        try {
+          created = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null, code: code ? await sealCode(code, sealed.keyStr) : null });
+          break;
+        } catch (e) { if (e.code !== 'code_taken' || tries >= 2) throw e; }
+      }
+      const { id, ownerToken, expiresAt } = created;
+      const label = kind === 'file' ? (files.length > 1 ? `${files.length} files: ${files.map(f => f.name).join(', ')}`.slice(0, 80) : file.name) : ((text.split('\n').find(l => l.trim()) || 'Untitled').trim().slice(0, 60));
+      const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
       await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
       if (linksVisible) setLinks(prev => [record, ...prev]);
-      setResult({ ...sealed, id, expiry, password: pwOn, maxAttempts, kind, qrOnly });
+      setResult({ ...sealed, id, expiry, password: pwOn, maxAttempts, kind, qrOnly, code });
     } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That is') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
     finally { setBusy(false); }
   };
@@ -2208,7 +2365,7 @@ function App() {
   const headings = {
     type: ['What would you like to share?', 'Everything is encrypted in this browser tab before it is sent.'],
     format: ['What kind of text is it?', 'This sets the formatting your recipient sees.'],
-    content: kind === 'file' ? ['Add your file', 'Up to 25 MB on the free tier. Its name is encrypted too.'] : [lang === 'Plain text' ? 'Paste your text' : `Paste your ${lang}`, 'Nothing leaves this tab until you create the link.'],
+    content: kind === 'file' ? ['Add your files', 'As many as you like, up to 25 MB in total. Their names are encrypted too.'] : [lang === 'Plain text' ? 'Paste your text' : `Paste your ${lang}`, 'Nothing leaves this tab until you create the link.'],
     protect: ['How should it disappear?', 'Choose when the link dies and whether it needs a password.'],
   };
   const [title, sub] = headings[step];
@@ -2325,9 +2482,18 @@ function App() {
                 <ChoiceCard id="choose-paste" title="Text or code" sub="A message, a login, private notes or a code snippet."
                   examples={['Wi-Fi password', 'a login', 'private notes', 'code']} onClick={() => choose('paste')} i={0}
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
-                <ChoiceCard id="choose-file" title="A file" sub="Documents, images, archives. Up to 25 MB."
+                <ChoiceCard id="choose-file" title="Files" sub="Documents, images, archives. As many as you like, up to 25 MB in total."
                   examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1} t1="var(--cyan)" t2="var(--violet)"
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>} />
+                <a id="have-code" href="/code" style={{ '--i': 2, '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}
+                  className="group lift press tone-card sm:col-span-2 rounded-2xl border px-5 py-4 flex items-center gap-4">
+                  <span className="tone-icon w-10 h-10 rounded-xl grid place-items-center shrink-0" aria-hidden="true">{KEYBOARD_ICON}</span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-semibold text-[14.5px]">Got a code?</span>
+                    <span className="block text-mute text-[12.5px]">Someone sent you 4 words instead of a link. Type them here to open it.</span>
+                  </span>
+                  <span className="tone-text text-[13px] font-semibold shrink-0">Open <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span></span>
+                </a>
                 <p className="sm:col-span-2 text-[12.5px] text-mute text-center" style={{ '--i': 3 }}>{FEATURES.vaultFiles && <>Want to keep files instead? <button onClick={() => setView('vault')} className="text-fg underline underline-offset-2 hover:text-ember">Open your vault</button> · </>}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button></p>
               </div>
             )}
@@ -2364,7 +2530,7 @@ function App() {
                   <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line">
                     <span className="text-[12px] font-mono truncate min-w-0 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: kind === 'paste' ? colorOf(lang) : 'var(--cyan)' }} aria-hidden="true" />
-                      <span className="text-mute">{kind === 'paste' ? 'untitled' + extOf(lang) : (file ? file.name : 'no file yet')}</span>
+                      <span className="text-mute">{kind === 'paste' ? 'untitled' + extOf(lang) : (filesLabel || 'no files yet')}</span>
                     </span>
                     {kind === 'paste' && (
                       <button onClick={() => go('format')} className="shrink-0 text-[12px] font-mono rounded-md border border-line px-2 py-1 hover:border-ember transition-colors" style={{ color: tint(colorOf(lang)) }}>{lang} · change</button>
@@ -2400,36 +2566,61 @@ function App() {
                       )}
                     </div>
                   ) : (
-                    <div className="p-4 bg-well min-h-[320px] flex">
+                    <div className="p-4 bg-well min-h-[320px] flex flex-col gap-3">
                       <div
                         onDragOver={(e) => { e.preventDefault(); setDrag(true); }}
                         onDragLeave={() => setDrag(false)}
-                        onDrop={(e) => { e.preventDefault(); setDrag(false); pickFile(e.dataTransfer.files[0]); }}
+                        onDrop={(e) => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files); }}
                         onClick={() => fileInput.current.click()}
                         onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && fileInput.current.click()}
-                        role="button" tabIndex={0}
-                        className={`flex-1 rounded-xl border-2 border-dashed flex flex-col items-center justify-center text-center gap-3 p-6 cursor-pointer transition-colors ${drag ? 'border-ember bg-[var(--ember-soft)]' : 'border-line hover:border-mute'}`}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke={drag ? 'var(--ember)' : 'var(--mute)'} strokeWidth="1.5" aria-hidden="true">
-                          <rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/><path d="M12 14v3"/>
+                        role="button" tabIndex={0} id="dropzone"
+                        className={`${files.length ? 'flex-row py-4' : 'flex-1 flex-col p-6'} rounded-xl border-2 border-dashed flex items-center justify-center text-center gap-3 px-4 cursor-pointer transition-colors ${drag ? 'border-ember bg-[var(--ember-soft)]' : 'border-line hover:border-cyan'}`}>
+                        <svg width={files.length ? 22 : 40} height={files.length ? 22 : 40} viewBox="0 0 24 24" fill="none" stroke={drag ? 'var(--ember)' : 'var(--cyan)'} strokeWidth="1.6" strokeLinecap="round" aria-hidden="true">
+                          <path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/>
                         </svg>
-                        {file ? (
-                          <div>
-                            <div className="font-mono text-[13px] break-all">{file.name}</div>
-                            <div className="text-mute text-[12px] mt-1 tabular">{fmtBytes(file.size)} · {file.type || 'unknown type'} · click to replace</div>
-                          </div>
-                        ) : (
-                          <div>
-                            <div className="font-semibold">Drop a file here</div>
-                            <div className="text-mute text-[12.5px] mt-1">or click to browse</div>
-                          </div>
-                        )}
-                        <input ref={fileInput} id="file" type="file" className="hidden" onChange={(e) => pickFile(e.target.files[0])} />
+                        {files.length
+                          ? <div className="font-semibold text-[13.5px]">Add more files <span className="text-mute font-normal">· drop or click</span></div>
+                          : <div>
+                              <div className="font-semibold">Drop files here</div>
+                              <div className="text-mute text-[12.5px] mt-1">or click to browse. Pick as many as you like.</div>
+                            </div>}
+                        <input ref={fileInput} id="file" type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
                       </div>
+                      {files.length > 0 && (
+                        <>
+                          <ul id="file-list" className="flex flex-col gap-1.5 max-h-[260px] overflow-y-auto">
+                            {files.map((f, i) => {
+                              const ts = TYPE_STYLE[typeOf(f.name, f.type)];
+                              return (
+                                <li key={f.name + f.size + f.lastModified} className="rise flex items-center gap-3 rounded-lg bg-panel border border-line px-3 py-2">
+                                  <span className="w-9 h-9 rounded-lg grid place-items-center font-mono text-[10px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }} aria-hidden="true">{ts.t}</span>
+                                  <span className="min-w-0 flex-1">
+                                    <span className="block font-mono text-[12.5px] truncate">{f.name}</span>
+                                    <span className="block text-mute text-[11.5px] tabular">{fmtBytes(f.size)}</span>
+                                  </span>
+                                  <button onClick={() => removeFile(i)} aria-label={`Remove ${f.name}`} className="press shrink-0 w-8 h-8 rounded-lg grid place-items-center text-mute hover:text-ember hover:bg-[var(--ember-soft)] transition-colors">
+                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                                  </button>
+                                </li>
+                              );
+                            })}
+                          </ul>
+                          <div>
+                            <div className="flex justify-between text-[11.5px] text-mute tabular mb-1.5">
+                              <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)} of 25 MB</span>
+                              <button onClick={() => setFiles([])} className="hover:text-ember transition-colors">Remove all</button>
+                            </div>
+                            <div className="h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
+                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / MAX_TOTAL * 100)}%`, background: filesSize / MAX_TOTAL > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
+                            </div>
+                          </div>
+                        </>
+                      )}
                     </div>
                   )}
 
                   <div className="flex justify-between px-4 py-2 border-t border-line text-[11.5px] font-mono text-mute tabular">
-                    <span>{kind === 'paste' ? `${lines} lines · ${lang}` : file ? 'ready' : 'waiting for file'}</span>
+                    <span>{kind === 'paste' ? `${lines} lines · ${lang}` : files.length ? 'ready' : 'waiting for files'}</span>
                     <span>{bytes.toLocaleString('en-US')} B</span>
                   </div>
                 </section>
@@ -2480,7 +2671,7 @@ function App() {
               <div key="s3" className={`${dir === 'back' ? 'step-back' : 'step-fwd'} flex flex-col gap-4`}>
                 <div className="rounded-xl border border-line bg-panel px-4 py-3 flex items-center gap-3 min-w-0">
                   <span className="label shrink-0">Sharing</span>
-                  <span className="font-mono text-[12.5px] truncate min-w-0 flex-1">{kind === 'file' ? file?.name : `${lines} lines · ${lang}`}</span>
+                  <span className="font-mono text-[12.5px] truncate min-w-0 flex-1">{kind === 'file' ? filesLabel : `${lines} lines · ${lang}`}</span>
                   <span className="font-mono text-[12px] text-mute tabular shrink-0">{fmtBytes(bytes)}</span>
                   <button onClick={() => go('content')} className="text-[12.5px] text-ember hover:underline shrink-0">Edit</button>
                 </div>
@@ -2542,6 +2733,25 @@ function App() {
                     </div>
                     <Toggle id="qr-only-toggle" label="QR code only" on={qrOnly} onChange={setQrOnly} />
                   </div>
+                </div>
+
+                <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}>
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-start gap-3">
+                      <span className="mt-0.5 text-gold shrink-0">{KEYBOARD_ICON}</span>
+                      <div>
+                        <div className="text-[13.5px] font-semibold">Typeable code</div>
+                        <div className="text-[12px] text-mute">Also get 4 words that open this link, for a computer that cannot scan the QR code. Type them at {location.host}/code.</div>
+                      </div>
+                    </div>
+                    <Toggle id="code-toggle" label="Typeable code" on={codeOn} onChange={setCodeOn} />
+                  </div>
+                  {codeOn && (
+                    <div className="rise mt-3 rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 text-[12px]">
+                      A code is shorter than a link, so it is easier to guess. It is fine for quick hand-offs between your own devices.
+                      {pwOn ? ' Your password adds the missing strength.' : ' For anything very sensitive, add a password too.'}
+                    </div>
+                  )}
                 </div>
 
                 {err && <div className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[12.5px] px-3 py-2.5" role="alert">{err}</div>}

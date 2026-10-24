@@ -27,6 +27,10 @@ export class LinkDO {
       case '/revoke': return this.revoke(body);
       case '/status': return this.status(body);
       case '/remove': return this.remove(); // admin only; the Worker checks the admin token first
+      // Typeable codes. A code record lives in its own object, named after the hash of the code's lookup value.
+      case '/code-init': return this.codeInit(body);
+      case '/code-get': return this.codeGet();
+      case '/code-drop': return this.codeDrop();
       default: return json({ error: 'not_found' }, 404);
     }
   }
@@ -152,6 +156,30 @@ export class LinkDO {
     });
   }
 
+  // A code record holds only: which link, the link key wrapped with a key derived from the code, and when it dies.
+  async codeInit(b) {
+    const old = await this.state.storage.get('code');
+    if (old && Date.now() < old.expiresAt) return json({ error: 'exists' }, 409);
+    const code = { linkId: b.linkId, wrapped: b.wrapped, wrapIv: b.wrapIv, expiresAt: b.expiresAt };
+    await this.state.storage.put('code', code);
+    await this.state.storage.setAlarm(code.expiresAt);
+    return json({ ok: true });
+  }
+
+  async codeGet() {
+    const code = await this.state.storage.get('code');
+    if (!code || Date.now() >= code.expiresAt) {
+      if (code) await this.state.storage.deleteAll();
+      return json({ error: 'not_found' }, 404);
+    }
+    return json({ linkId: code.linkId, wrapped: code.wrapped, wrapIv: code.wrapIv });
+  }
+
+  async codeDrop() {
+    await this.state.storage.deleteAll();
+    return json({ ok: true });
+  }
+
   async isOwner(rec, token) {
     if (typeof token !== 'string' || !token) return false;
     return safeEqual(await sha256b64(token), rec.ownerHash);
@@ -162,6 +190,12 @@ export class LinkDO {
   }
 
   async runAlarm() {
+    const code = await this.state.storage.get('code');
+    if (code) {
+      if (Date.now() >= code.expiresAt) await this.state.storage.deleteAll();
+      else await this.state.storage.setAlarm(code.expiresAt);
+      return;
+    }
     const rec = await this.state.storage.get('rec');
     if (!rec) return;
     if (rec.state === 'live') {
