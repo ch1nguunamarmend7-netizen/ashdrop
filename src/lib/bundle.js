@@ -3,6 +3,7 @@
 
 export const MAX_FILES = 100;
 export const MAX_TOTAL = 25 * 1024 * 1024; // free per-link cap; the server allows a little extra for headers
+export const OWNER_MAX_TOTAL = 95 * 1024 * 1024; // with the site owner's key (see lib/owner.js)
 
 /** Concatenate files; the list of names, types and sizes goes into the sealed header. */
 export async function bundleFiles(files) {

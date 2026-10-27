@@ -8,21 +8,31 @@ async function readError(res) {
   return body.error || body.reason || `HTTP ${res.status}`;
 }
 
-/** Upload a sealed payload. Returns { id, ownerToken, expiresAt }. */
-export async function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAttempts, code = null }) {
+/** Upload a sealed payload. Returns { id, ownerToken, expiresAt }.
+    Uses XMLHttpRequest because fetch cannot report upload progress, which matters for big files. */
+export function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAttempts, code = null, ownerKey = '', onProgress }) {
   const meta = { expiry, iv: b64url(iv) };
   if (code) meta.code = code; // { lookup, wrapped, wrapIv } from sealCode()
   if (authToken) Object.assign(meta, { maxAttempts, salt: b64url(salt), iv2: b64url(iv2), authToken: b64url(authToken) });
-  const res = await fetch(BASE, {
-    method: 'POST',
-    headers: { 'content-type': 'application/octet-stream', 'x-ashdrop-meta': JSON.stringify(meta) },
-    body: ct,
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', BASE);
+    xhr.setRequestHeader('content-type', 'application/octet-stream');
+    xhr.setRequestHeader('x-ashdrop-meta', JSON.stringify(meta));
+    if (ownerKey) xhr.setRequestHeader('x-ashdrop-owner-key', ownerKey);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onerror = () => reject(new Error('Could not create the link: the upload was interrupted. Check your connection.'));
+    xhr.onload = () => {
+      let body = {};
+      try { body = JSON.parse(xhr.responseText); } catch {}
+      if (xhr.status === 201) return resolve(body);
+      if (xhr.status === 413) return reject(new Error(`That is too large for this link (${body.limit > 30e6 ? '95' : '25'} MB).`));
+      if (xhr.status === 429) return reject(new Error('Too many links in a short time. Wait a minute and try again.'));
+      if (xhr.status === 409) { const e = new Error('code_taken'); e.code = 'code_taken'; return reject(e); }
+      reject(new Error(`Could not create the link: ${body.error || body.reason || `HTTP ${xhr.status}`}`));
+    };
+    xhr.send(ct);
   });
-  if (res.status === 413) throw new Error('That is too large for a free link (25 MB).');
-  if (res.status === 429) throw new Error('Too many links in a short time. Wait a minute and try again.');
-  if (res.status === 409) { const e = new Error('code_taken'); e.code = 'code_taken'; throw e; }
-  if (!res.ok) throw new Error(`Could not create the link: ${await readError(res)}`);
-  return res.json();
 }
 
 /** What the recipient page may know before unlocking. */
@@ -34,7 +44,7 @@ export async function getMeta(id) {
 }
 
 /** Ask the server to release the ciphertext. */
-export async function openLink(id, authToken) {
+export async function openLink(id, authToken, onProgress) {
   const res = await fetch(`${BASE}/${id}/open`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -48,7 +58,7 @@ export async function openLink(id, authToken) {
   const iv2 = res.headers.get('x-ashdrop-iv2');
   return {
     status: 'ok',
-    ct: await res.arrayBuffer(),
+    ct: await readWithProgress(res, onProgress),
     iv: b64urlDecode(res.headers.get('x-ashdrop-iv')),
     iv2: iv2 ? b64urlDecode(iv2) : null,
     burned: res.headers.get('x-ashdrop-burned') === '1',
@@ -75,4 +85,22 @@ export async function lookupCode(lookup) {
   if (res.status === 429) return { status: 'rate_limited' };
   const body = await res.json().catch(() => ({}));
   return { status: res.status === 410 ? 'gone' : 'not_found', reason: body.reason };
+}
+
+// Read a response body, reporting progress when the size is known.
+async function readWithProgress(res, onProgress) {
+  const total = Number(res.headers.get('content-length')) || 0;
+  if (!onProgress || !total || !res.body) return res.arrayBuffer();
+  const out = new Uint8Array(total);
+  const reader = res.body.getReader();
+  let at = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (at + value.length > total) throw new Error('More data than expected');
+    out.set(value, at); at += value.length;
+    onProgress(at / total);
+  }
+  if (at !== total) throw new Error('The download was cut off. Reload and try again.');
+  return out.buffer;
 }

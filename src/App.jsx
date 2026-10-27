@@ -5,7 +5,8 @@ import qrcode from 'qrcode-generator';
 import { enc, hex, fmtBytes, sealPayload, derivePasswordKeys, pack, unpack, openPayload } from './lib/crypto.js';
 import { createLink, getMeta, openLink, revokeLink, linkStatus, lookupCode } from './lib/api.js';
 import { generateCode, parseCode, sealCode, openCode, CODE_WORDS } from './lib/code.js';
-import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL } from './lib/bundle.js';
+import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL, OWNER_MAX_TOTAL } from './lib/bundle.js';
+import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
 
@@ -34,6 +35,7 @@ const randId = () => { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; const r = cr
 const timeLeft = (ms) => {
   if (ms <= 0) return 'now';
   const m = Math.floor(ms / 60000), h = Math.floor(m / 60);
+  if (h >= 48) return `${Math.floor(h / 24)}d ${h % 24}h`;
   return h >= 1 ? `${h}h ${m % 60}m` : m >= 1 ? `${m}m` : `${Math.ceil(ms / 1000)}s`;
 };
 const ago = (ts) => {
@@ -47,8 +49,9 @@ const EXPIRY = [
   { id: 'burn', label: 'Burn after 1 view', sub: 'Deleted the moment it is opened' },
   { id: '1h', label: '1 hour', sub: 'Then purged from storage' },
   { id: '24h', label: '24 hours', sub: 'Free tier maximum' },
+  { id: '7d', label: '7 days', sub: 'Owner only', owner: true },
 ];
-const EXPIRY_TONE = { burn: 'var(--ember)', '1h': 'var(--violet)', '24h': 'var(--cyan)' };
+const EXPIRY_TONE = { burn: 'var(--ember)', '1h': 'var(--violet)', '24h': 'var(--cyan)', '7d': 'var(--gold)' };
 const SAMPLE = `# .env.production — rotate after sharing
 DATABASE_URL=postgres://deploy:••••••@db.internal:5432/app
 STRIPE_WEBHOOK_SECRET=whsec_example_not_real
@@ -488,6 +491,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
   const [burning, setBurning] = useState(false);
   const [copied, setCopied] = useState(false);
   const [dl, setDl] = useState(null);
+  const [dlPct, setDlPct] = useState(null); // download progress for big files
   const log = (line) => setServerLog(l => [...l, line]);
 
   useEffect(() => { let alive = true; setDl(browserDownloads); return () => { alive = false; }; }, []);
@@ -498,7 +502,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
     try {
       let token = new Uint8Array(0), pwKey = null;
       if (meta.needsPassword) { const d = await derivePasswordKeys(pw, meta.salt); token = d.token; pwKey = d.pwKey; }
-      const res = await openLink(id, meta.needsPassword ? token : null);
+      const res = await openLink(id, meta.needsPassword ? token : null, (p) => setDlPct(p < 1 ? p : null));
       if (res.status === 'denied') {
         log(`POST /open → 401 · token hash mismatch · ${res.attemptsLeft} left`);
         setLeft(res.attemptsLeft); setPw(''); setShakeKey(k => k + 1);
@@ -582,7 +586,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <span className="text-[11.5px] rounded-full border border-ember/40 px-2.5 py-1 text-ember">{m.expiry === 'burn' ? 'One view only' : `Expires in ${timeLeft(m.expiresAt - Date.now())}`}</span>
             </div>
             <button id="reveal" onClick={reveal} disabled={busy} className="press ember-glow mt-2 rounded-xl px-7 py-3.5 bg-ember text-ink font-display font-bold text-[17px] hover:brightness-110 transition">
-              {busy ? 'Decrypting…' : m.needsPassword ? 'Continue' : `Reveal ${what}`}
+              {busy ? (dlPct !== null ? `Downloading ${Math.round(dlPct * 100)}%` : 'Decrypting…') : m.needsPassword ? 'Continue' : `Reveal ${what}`}
             </button>
             <p className="text-[12px] text-mute max-w-sm">Nothing is fetched until you click, so chat-app link previews cannot burn it. Decryption happens only in this browser.</p>
           </div>
@@ -601,7 +605,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <label htmlFor="rec-pw" className="sr-only">Password</label>
               <input id="rec-pw" type="password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
                 className="flex-1 min-w-0 bg-well border border-line rounded-xl px-4 py-3 font-mono text-[14px] outline-hidden focus:border-cyan" autoComplete="off" />
-              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-grad disabled:opacity-50">{busy ? 'Checking…' : 'Unlock'}</button>
+              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-grad disabled:opacity-50">{busy ? (dlPct !== null ? `${Math.round(dlPct * 100)}%` : 'Checking…') : 'Unlock'}</button>
             </form>
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
             <p className="text-[12px] text-mute mt-4">Your browser turns the password into a check token. The password and the key in the link never leave this device.</p>
@@ -1966,7 +1970,39 @@ function MotionDemo() {
   );
 }
 
-function Settings({ settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
+/* The site owner pastes their OWNER_KEY here once per device. Everyone else can ignore it. */
+function OwnerAccess({ on, onChange }) {
+  const [open, setOpen] = useState(false);
+  const [key, setKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const save = async (e) => {
+    e.preventDefault(); setBusy(true); setMsg('');
+    try { await saveOwnerKey(key.trim()); setKey(''); setOpen(false); onChange(true); }
+    catch (err) { setMsg(err.message); }
+    setBusy(false);
+  };
+  if (on) return (
+    <Row title="Owner key active on this device" sub="Links you make here can carry up to 95 MB and last up to 7 days. Remove the key before lending this device to anyone.">
+      <div className="flex sm:justify-end"><button id="owner-remove" onClick={() => { clearOwnerKey(); onChange(false); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember transition-colors">Remove key</button></div>
+    </Row>
+  );
+  return (
+    <Row stack title="Run this site?" sub="Paste your owner key to unlock bigger links (95 MB) and 7-day expiry on this device. Visitors don't need this.">
+      {!open
+        ? <div><button id="owner-open" onClick={() => setOpen(true)} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-gold hover:text-gold transition-colors">Enter owner key</button></div>
+        : <form onSubmit={save} className="flex flex-col sm:flex-row gap-2">
+            <label htmlFor="owner-key" className="sr-only">Owner key</label>
+            <input id="owner-key" type="password" autoFocus value={key} onChange={(e) => setKey(e.target.value)} placeholder="Owner key" autoComplete="off"
+              className="flex-1 min-w-0 bg-well border border-line rounded-lg px-3 py-2.5 font-mono text-[13px] outline-hidden focus:border-gold" />
+            <button id="owner-save" disabled={busy || key.trim().length < 32} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-grad disabled:opacity-50">{busy ? 'Checking…' : 'Save'}</button>
+          </form>}
+      {msg && <div role="alert" className="text-[12.5px] text-warn mt-2">{msg}</div>}
+    </Row>
+  );
+}
+
+function Settings({ ownerOn, onOwnerChange, settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
   const [confirm, setConfirm] = useState(null); // 'cancel' | 'wipe' | 'reset'
   const set = (k, v) => setSettings(prev => ({ ...prev, [k]: v }));
   const isPro = plan.tier === 'pro';
@@ -2056,6 +2092,10 @@ function Settings({ settings, setSettings, plan, onCancelPlan, onUpgrade, signed
             <div className="flex sm:justify-end"><button id="change-passcode" onClick={onChangePasscode} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">Change passcode</button></div>
           </Row>
         )}
+      </Section>
+
+      <Section title="Owner access" i={4}>
+        <OwnerAccess on={ownerOn} onChange={onOwnerChange} />
       </Section>
 
       {(FEATURES.accounts || FEATURES.recovery) && <Section title="Account" i={4}>
@@ -2190,6 +2230,11 @@ function App() {
   const [pwOn, setPwOn] = useState(() => loadSettings().defaultPw);
   const [qrOnly, setQrOnly] = useState(false);
   const [codeOn, setCodeOn] = useState(false);
+  const [progress, setProgress] = useState(null); // upload progress 0..1 while a big link is sent
+  // Site owner mode: bigger links and 7-day expiry, unlocked by the owner key saved in Settings.
+  const [ownerOn, setOwnerOn] = useState(() => !!getOwnerKey());
+  const maxTotal = ownerOn ? OWNER_MAX_TOTAL : MAX_TOTAL;
+  const limitLabel = ownerOn ? '95 MB' : '25 MB';
   const [pw, setPw] = useState('');
   const [maxAttempts, setMaxAttempts] = useState(() => loadSettings().defaultAttempts);
   const [recipientOf, setRecipientOf] = useState(null);
@@ -2308,18 +2353,19 @@ function App() {
   };
   const startOver = () => { setDir('back'); setStep('type'); setMaxIdx(0); setKind(null); setText(''); setFile(null); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setCodeOn(false); setErr(''); };
 
-  // Add files to the list. Everything together must stay under 25 MB.
+  useEffect(() => { if (!ownerOn && expiry === '7d') setExpiry('24h'); }, [ownerOn, expiry]);
+  // Add files to the list. Everything together must stay under the limit (25 MB, or 95 MB for the site owner).
   const addFiles = (list) => {
     const incoming = Array.from(list || []).filter(f => !files.some(g => g.name === f.name && g.size === f.size && g.lastModified === f.lastModified));
     if (!incoming.length) return;
     let next = [...files], skipped = [];
     for (const f of incoming) {
       if (next.length >= MAX_FILES) { skipped.push(`${f.name} (limit of ${MAX_FILES} files)`); continue; }
-      if (next.reduce((n, g) => n + g.size, 0) + f.size > MAX_TOTAL) { skipped.push(`${f.name} (${fmtBytes(f.size)})`); continue; }
+      if (next.reduce((n, g) => n + g.size, 0) + f.size > maxTotal) { skipped.push(`${f.name} (${fmtBytes(f.size)})`); continue; }
       next.push(f);
     }
     setFiles(next);
-    setErr(skipped.length ? `Not added, it would go over 25 MB in total: ${skipped.join(', ')}.` : '');
+    setErr(skipped.length ? `Not added, it would go over ${limitLabel} in total: ${skipped.join(', ')}.` : '');
   };
   const removeFile = (i) => { setFiles(fs => fs.filter((_, j) => j !== i)); setErr(''); };
 
@@ -2345,7 +2391,8 @@ function App() {
       for (let tries = 0; ; tries++) {
         code = codeOn ? generateCode() : null;
         try {
-          created = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null, code: code ? await sealCode(code, sealed.keyStr) : null });
+          created = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null, code: code ? await sealCode(code, sealed.keyStr) : null,
+            ownerKey: ownerOn ? getOwnerKey() : '', onProgress: sealed.ct.byteLength > 2e6 ? setProgress : undefined });
           break;
         } catch (e) { if (e.code !== 'code_taken' || tries >= 2) throw e; }
       }
@@ -2356,7 +2403,7 @@ function App() {
       if (linksVisible) setLinks(prev => [record, ...prev]);
       setResult({ ...sealed, id, expiry, password: pwOn, maxAttempts, kind, qrOnly, code });
     } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That is') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
-    finally { setBusy(false); }
+    finally { setBusy(false); setProgress(null); }
   };
 
   const NAV = [['share', 'Share'], ['vault', FEATURES.vaultFiles ? 'Vault' : 'My links']];
@@ -2365,7 +2412,7 @@ function App() {
   const headings = {
     type: ['What would you like to share?', 'Everything is encrypted in this browser tab before it is sent.'],
     format: ['What kind of text is it?', 'This sets the formatting your recipient sees.'],
-    content: kind === 'file' ? ['Add your files', 'As many as you like, up to 25 MB in total. Their names are encrypted too.'] : [lang === 'Plain text' ? 'Paste your text' : `Paste your ${lang}`, 'Nothing leaves this tab until you create the link.'],
+    content: kind === 'file' ? ['Add your files', `As many as you like, up to ${limitLabel} in total. Their names are encrypted too.`] : [lang === 'Plain text' ? 'Paste your text' : `Paste your ${lang}`, 'Nothing leaves this tab until you create the link.'],
     protect: ['How should it disappear?', 'Choose when the link dies and whether it needs a password.'],
   };
   const [title, sub] = headings[step];
@@ -2381,6 +2428,7 @@ function App() {
       <header className="head-glow sticky z-40 bg-ink/80 backdrop-blur-sm border-b border-transparent" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
         <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-2 sm:gap-3">
           <button onClick={() => { setView('share'); }} aria-label="Ashdrop home"><Logo /></button>
+          {ownerOn && <span id="owner-chip" title="Owner key active on this device: links up to 95 MB, 7-day expiry" style={{ '--t1': 'var(--gold)' }} className="tone-chip hidden sm:inline-flex border rounded-full px-2 py-0.5 text-[11px] font-semibold">Owner</span>}
           <nav className="mx-auto overflow-x-auto no-scrollbar min-w-0" aria-label="Sections">
             <div className="relative grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
               <span className="absolute top-1 bottom-1 left-1 rounded-lg grad-bg transition-all duration-500" aria-hidden="true"
@@ -2419,7 +2467,7 @@ function App() {
               <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">Settings</h1>
               <p className="text-mute text-[14px] mt-2">Saved on this device. Nothing here is sent to Ashdrop.</p>
             </div>
-            <Settings settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme}
+            <Settings settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme} ownerOn={ownerOn} onOwnerChange={setOwnerOn}
               onCancelPlan={() => { setPlan({ tier: 'free' }); toast('Pro canceled. Billing has stopped.'); }}
               onUpgrade={(gb) => setPro({ gb })}
               signedIn={signedIn} onSignOut={() => { setSignedIn(false); setView('share'); toast('Signed out. Your vault key was cleared from this tab.'); }}
@@ -2482,7 +2530,7 @@ function App() {
                 <ChoiceCard id="choose-paste" title="Text or code" sub="A message, a login, private notes or a code snippet."
                   examples={['Wi-Fi password', 'a login', 'private notes', 'code']} onClick={() => choose('paste')} i={0}
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
-                <ChoiceCard id="choose-file" title="Files" sub="Documents, images, archives. As many as you like, up to 25 MB in total."
+                <ChoiceCard id="choose-file" title="Files" sub={`Documents, images, archives. As many as you like, up to ${limitLabel} in total.`}
                   examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1} t1="var(--cyan)" t2="var(--violet)"
                   icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>} />
                 <a id="have-code" href="/code" style={{ '--i': 2, '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}
@@ -2607,11 +2655,11 @@ function App() {
                           </ul>
                           <div>
                             <div className="flex justify-between text-[11.5px] text-mute tabular mb-1.5">
-                              <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)} of 25 MB</span>
+                              <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)} of {limitLabel}</span>
                               <button onClick={() => setFiles([])} className="hover:text-ember transition-colors">Remove all</button>
                             </div>
                             <div className="h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
-                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / MAX_TOTAL * 100)}%`, background: filesSize / MAX_TOTAL > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
+                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / maxTotal * 100)}%`, background: filesSize / maxTotal > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
                             </div>
                           </div>
                         </>
@@ -2678,8 +2726,8 @@ function App() {
 
                 <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--ember)', '--t2': 'var(--gold)' }}>
                   <div className="label mb-3">Expiration</div>
-                  <div className="grid sm:grid-cols-3 gap-2" role="radiogroup" aria-label="Expiration">
-                    {EXPIRY.map(o => (
+                  <div className={`grid gap-2 ${ownerOn ? 'grid-cols-2 sm:grid-cols-4' : 'sm:grid-cols-3'}`} role="radiogroup" aria-label="Expiration">
+                    {EXPIRY.filter(o => !o.owner || ownerOn).map(o => (
                       <button key={o.id} id={`exp-${o.id}`} role="radio" aria-checked={expiry === o.id} onClick={() => setExpiry(o.id)} style={{ '--t1': EXPIRY_TONE[o.id] }}
                         className="press tone-opt flex items-start gap-3 text-left rounded-xl px-3 py-3 border transition-all duration-300">
                         <span className="tone-dot mt-1 w-3.5 h-3.5 rounded-full border-2 shrink-0 transition-all duration-300" />
@@ -2760,7 +2808,7 @@ function App() {
                   <BackBtn />
                   <button id="create" onClick={create} disabled={busy}
                     className={`press flex-1 rounded-xl py-3.5 px-5 btn-grad font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
-                    {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />Encrypting…</> : 'Create Secure Link'}
+                    {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create Secure Link'}
                   </button>
                 </div>
                 <p className="text-[11.5px] text-mute text-center">Free · anonymous · no account · lockout included</p>

@@ -54,21 +54,23 @@ export async function sealPayload(bytes, password) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   let ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, bytes);
   log.push(['AES-256-GCM encrypt (layer 1)', fmtBytes(ct.byteLength)]);
-  let salt = null, iv2 = null, authToken = null;
+  let salt = null, iv2 = null, authToken = null, pwKey = null;
   if (password) {
     salt = crypto.getRandomValues(new Uint8Array(16));
     iv2 = crypto.getRandomValues(new Uint8Array(12));
-    const { pwKey, token } = await derivePasswordKeys(password, salt);
-    authToken = token;
+    const d = await derivePasswordKeys(password, salt);
+    pwKey = d.pwKey; authToken = d.token;
     log.push(['PBKDF2-SHA256 · 310,000 rounds → HKDF', 'enc key + auth token']);
     ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv2 }, pwKey, ct);
     log.push(['AES-256-GCM encrypt (password layer)', fmtBytes(ct.byteLength)]);
-    const inner = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv2 }, pwKey, ct);
-    await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, inner);
-  } else {
-    await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
   }
-  log.push(['Decrypted locally to verify', 'auth tag OK']);
+  // Decrypt once here to prove the link will open. Skipped for very large payloads, where it would
+  // briefly need several more copies in memory (phones can run out); AES-GCM still checks it on open.
+  if (bytes.byteLength <= 25 * 1024 * 1024) {
+    const inner = password ? await crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv2 }, pwKey, ct) : ct;
+    await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, inner);
+    log.push(['Decrypted locally to verify', 'auth tag OK']);
+  }
   return { keyStr: b64url(rawKey), iv, salt, iv2, ct, authToken, ms: performance.now() - t0, log };
 }
 

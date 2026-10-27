@@ -5,11 +5,14 @@ export function makeEnv() {
   const blobs = new Map();
   const objects = new Map();
   const BLOBS = {
-    async put(k, v) { blobs.set(k, new Uint8Array(v)); },
-    async get(k) { const v = blobs.get(k); return v ? { arrayBuffer: async () => v.buffer.slice(0) } : null; },
+    async put(k, v) { blobs.set(k, new Uint8Array(v instanceof ReadableStream ? await new Response(v).arrayBuffer() : v)); },
+    async get(k) {
+      const v = blobs.get(k);
+      return v ? { size: v.length, body: new Blob([v]).stream(), arrayBuffer: async () => v.buffer.slice(0) } : null;
+    },
     async delete(k) { blobs.delete(k); },
   };
-  const env = { BLOBS };
+  const env = { BLOBS, _waits: [] };
   function state() {
     // Mirrors blockConcurrencyWhile: one request at a time per object.
     let chain = Promise.resolve();

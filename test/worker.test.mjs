@@ -7,7 +7,13 @@ import { makeEnv } from './mock-env.mjs';
 
 const b64 = (bytes) => Buffer.from(bytes).toString('base64url');
 const rand = (n) => (n <= 65536 ? crypto.getRandomValues(new Uint8Array(n)) : new Uint8Array(n).fill(7));
-const call = (env, path, init) => worker.fetch(new Request(`https://ashdrop.test${path}`, init), env, {});
+// Real incoming requests carry Content-Length; Node's Request does not add it, so add it like a browser would.
+const call = (env, path, init = {}) => {
+  const headers = new Headers(init.headers);
+  if (init.body instanceof Uint8Array && !headers.has('content-length')) headers.set('content-length', String(init.body.length));
+  return worker.fetch(new Request(`https://ashdrop.test${path}`, { ...init, headers }), env, { waitUntil: (p) => env._waits.push(p) });
+};
+const settle = (env) => Promise.all(env._waits.splice(0));
 
 async function create(env, { expiry = 'burn', password = null, maxAttempts = 3, size = 64 } = {}) {
   const meta = { expiry, iv: b64(rand(12)) };
@@ -29,8 +35,10 @@ test('burn link: opens once, then is gone, and its ciphertext is deleted', async
   const open = await call(env, `/api/p/${body.id}/open`, { method: 'POST', body: '{}' });
   assert.equal(open.status, 200);
   assert.equal(open.headers.get('x-ashdrop-burned'), '1');
+  assert.equal(open.headers.get('content-length'), '64');
   assert.equal((await open.arrayBuffer()).byteLength, 64);
-  assert.equal(env._blobs.size, 0, 'ciphertext deleted on burn');
+  await settle(env);
+  assert.equal(env._blobs.size, 0, 'ciphertext deleted on burn, after it was sent');
 
   const again = await call(env, `/api/p/${body.id}/open`, { method: 'POST', body: '{}' });
   assert.equal(again.status, 410);
@@ -234,4 +242,48 @@ test('code: lookups are rate limited', async () => {
   const env = makeEnv();
   env.CODE_LIMITER = { limit: async () => ({ success: false }) };
   assert.equal((await lookupCode(env, b64(rand(32)))).status, 429);
+});
+
+// ---------- site owner key ----------
+const OWNER = 'o'.repeat(20) + b64(rand(24));
+async function createAs(env, key, { size = 64, expiry = '24h', declared } = {}) {
+  const meta = { expiry, iv: b64(rand(12)) };
+  const headers = { 'x-ashdrop-meta': JSON.stringify(meta) };
+  if (key) headers['x-ashdrop-owner-key'] = key;
+  if (declared !== undefined) headers['content-length'] = String(declared);
+  const body = new Uint8Array(size).fill(1);
+  return call(env, '/api/p', { method: 'POST', headers, body });
+}
+
+test('owner key: bigger uploads and 7-day links only with the right key', async () => {
+  const env = makeEnv();
+  env.OWNER_KEY = OWNER;
+  const big = 30 * 1024 * 1024;
+  assert.equal((await createAs(env, null, { size: big })).status, 413, 'anyone: 25 MB cap');
+  assert.equal((await createAs(env, b64(rand(32)), { size: big })).status, 413, 'wrong key: 25 MB cap');
+  assert.equal((await createAs(env, OWNER, { size: big })).status, 201, 'owner: 30 MB is fine');
+  assert.equal((await createAs(env, OWNER, { size: 8, declared: 100_000_000 })).status, 413, 'owner: still under the 100 MB request cap');
+  assert.equal((await createAs(env, null, { expiry: '7d' })).status, 400, 'anyone: no 7-day links');
+  const week = await createAs(env, OWNER, { expiry: '7d' });
+  assert.equal(week.status, 201);
+  const { expiresAt } = await week.json();
+  assert.ok(expiresAt - Date.now() > 6.9 * 24 * 3600e3);
+});
+
+test('owner key: check endpoint, and off when no key is configured', async () => {
+  const env = makeEnv();
+  const check = (key) => call(env, '/api/owner', { method: 'POST', headers: key ? { 'x-ashdrop-owner-key': key } : {} });
+  assert.equal((await check(OWNER)).status, 404, 'no OWNER_KEY set: nobody is owner');
+  env.OWNER_KEY = 'short';
+  assert.equal((await check('short')).status, 404, 'a short key is never accepted');
+  env.OWNER_KEY = OWNER;
+  assert.equal((await check(b64(rand(32)))).status, 404);
+  const ok = await check(OWNER);
+  assert.equal(ok.status, 200);
+  assert.equal((await ok.json()).maxBytes, 99_900_000);
+});
+
+test('upload must declare its length, and a mismatch is not stored', async () => {
+  const env = makeEnv();
+  assert.equal((await createAs(env, null, { size: 8, declared: 0 })).status, 400);
 });

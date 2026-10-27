@@ -6,7 +6,11 @@ import { LinkDO, json, sha256b64, bytesToB64url } from './link.js';
 export { LinkDO };
 
 const MAX_BODY = 26 * 1024 * 1024;             // 25 MB free-tier file + small header + GCM tags
-const EXPIRY_MS = { burn: 24 * 3600e3, '1h': 3600e3, '24h': 24 * 3600e3 }; // unread burn links die after 24h
+// The site owner (whoever holds the OWNER_KEY secret) gets more: close to Cloudflare's 100 MB cap per upload,
+// and 7-day links. The key is checked on the server, so the public code alone unlocks nothing.
+const OWNER_MAX_BODY = 99_900_000;             // 95 MiB file + header + GCM tags, under the 100 MB request limit
+const EXPIRY_MS = { burn: 24 * 3600e3, '1h': 3600e3, '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 }; // unread burn links die after 24h
+const OWNER_ONLY_EXPIRY = new Set(['7d']);
 const ATTEMPTS = [1, 3, 5, 10];
 const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ID_RE = /^[a-hjkmnp-z2-9]{10}$/;
@@ -43,7 +47,7 @@ export default {
     res = new Response(securityTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });
   } else if (url.pathname.startsWith('/api/')) {
       try {
-        res = await handleApi(request, env, url);
+        res = await handleApi(request, env, url, ctx);
       } catch (err) {
         console.error(err);
         res = json({ error: 'server_error' }, 500);
@@ -79,9 +83,10 @@ function securityTxt(origin) {
 // Pages are served exactly as built, never rewritten, so anyone can compare them with the
 // published build fingerprints (see scripts/verify.mjs). Link previews use the static tags in index.html.
 
-async function handleApi(request, env, url) {
+async function handleApi(request, env, url, ctx) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'p', id?, action?]
   if (parts[1] === 'admin') return handleAdmin(request, env, parts);
+  if (parts[1] === 'owner' && parts.length === 2 && request.method === 'POST') return checkOwner(request, env);
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
 
@@ -100,7 +105,7 @@ async function handleApi(request, env, url) {
   if (parts[3] === 'open' && request.method === 'POST') {
     // Slows down anyone hammering links from one address. Each link also has its own lockout.
     if (!(await allowed(env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
-    return openLink(request, env, id, call);
+    return openLink(request, env, id, call, ctx);
   }
 
   return json({ error: 'not_found' }, 404);
@@ -108,12 +113,14 @@ async function handleApi(request, env, url) {
 
 // POST /api/p   body: ciphertext bytes   header x-ashdrop-meta: JSON
 async function createLink(request, env) {
-  if (!(await allowed(env.CREATE_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  const owner = await isSiteOwner(request, env);
+  if (!owner && !(await allowed(env.CREATE_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  const limit = owner ? OWNER_MAX_BODY : MAX_BODY;
 
   let meta;
   try { meta = JSON.parse(request.headers.get('x-ashdrop-meta') || ''); } catch { return json({ error: 'bad_meta' }, 400); }
   const { expiry, maxAttempts = null, salt = null, iv, iv2 = null, authToken = null, code = null } = meta || {};
-  if (!(expiry in EXPIRY_MS)) return json({ error: 'bad_expiry' }, 400);
+  if (!(expiry in EXPIRY_MS) || (OWNER_ONLY_EXPIRY.has(expiry) && !owner)) return json({ error: 'bad_expiry' }, 400);
   if (!isB64(iv, 16)) return json({ error: 'bad_iv' }, 400);
   const pw = authToken !== null;
   if (pw && (!ATTEMPTS.includes(maxAttempts) || !isB64(salt, 22) || !isB64(iv2, 16) || !isB64(authToken, 43))) {
@@ -123,22 +130,28 @@ async function createLink(request, env) {
     return json({ error: 'bad_code' }, 400);
   }
 
-  const declared = Number(request.headers.get('content-length') || 0);
-  if (declared > MAX_BODY) return json({ error: 'too_large', limit: MAX_BODY }, 413);
-  const body = await request.arrayBuffer();
-  if (body.byteLength === 0) return json({ error: 'empty' }, 400);
-  if (body.byteLength > MAX_BODY) return json({ error: 'too_large', limit: MAX_BODY }, 413);
+  // The size must be declared up front. The body is streamed straight into storage instead of being
+  // held in memory (a Worker has 128 MB), and storage refuses it if the real length differs.
+  const declared = Number(request.headers.get('content-length'));
+  if (!Number.isSafeInteger(declared) || !request.headers.has('content-length')) return json({ error: 'length_required' }, 411);
+  if (declared === 0 || !request.body) return json({ error: 'empty' }, 400);
+  if (declared > limit) return json({ error: 'too_large', limit }, 413);
 
   const id = randomId();
   const ownerToken = bytesToB64url(crypto.getRandomValues(new Uint8Array(32)));
   const expiresAt = Date.now() + EXPIRY_MS[expiry];
 
-  await env.BLOBS.put(`p/${id}`, body);
+  try {
+    await env.BLOBS.put(`p/${id}`, fixedLength(request.body, declared));
+  } catch {
+    await env.BLOBS.delete(`p/${id}`).catch(() => {});
+    return json({ error: 'upload_incomplete' }, 400);
+  }
   const stub = env.LINKS.get(env.LINKS.idFromName(id));
   const init = await stub.fetch('https://link/init', {
     method: 'POST', headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      id, expiry, expiresAt, size: body.byteLength,
+      id, expiry, expiresAt, size: declared,
       maxAttempts: pw ? maxAttempts : null,
       salt: pw ? salt : null, iv, iv2: pw ? iv2 : null,
       verifier: pw ? await sha256b64(authToken) : null,
@@ -189,7 +202,7 @@ async function lookupCode(request, env) {
 const codeName = async (lookup) => 'code:' + (await sha256b64(lookup));
 
 // POST /api/p/:id/open   body: { authToken? }
-async function openLink(request, env, id, call) {
+async function openLink(request, env, id, call, ctx) {
   const { authToken } = await request.json().catch(() => ({}));
   const verdict = await call('/open', { authToken: typeof authToken === 'string' ? authToken : undefined });
   const v = await verdict.json();
@@ -197,19 +210,49 @@ async function openLink(request, env, id, call) {
 
   const obj = await env.BLOBS.get(`p/${id}`);
   if (!obj) return json({ status: 'gone', reason: 'missing' }, 410);
-  const bytes = await obj.arrayBuffer();
-  if (v.burned) await env.BLOBS.delete(`p/${id}`); // the Durable Object already marked it burned
+  // Stream it out rather than loading up to 95 MB into memory. For a burn link the Durable Object has
+  // already marked it burned; the ciphertext is deleted as soon as the last byte has been sent
+  // (and the Durable Object's alarm deletes it later anyway, in case the download is cut off).
+  let body = obj.body;
+  if (v.burned) {
+    const { readable, writable } = new TransformStream();
+    const done = obj.body.pipeTo(writable).catch(() => {}).finally(() => env.BLOBS.delete(`p/${id}`));
+    ctx?.waitUntil?.(done);
+    body = readable;
+  }
 
-  return new Response(bytes, {
+  return new Response(body, {
     status: 200,
     headers: {
       'content-type': 'application/octet-stream',
+      'content-length': String(obj.size),
       'x-ashdrop-iv': v.iv,
       'x-ashdrop-iv2': v.iv2 || '',
       'x-ashdrop-burned': v.burned ? '1' : '0',
       'x-ashdrop-expires': String(v.expiresAt),
     },
   });
+}
+
+// POST /api/owner   header x-ashdrop-owner-key: <OWNER_KEY>
+// Lets the Settings page confirm an owner key before saving it. Answers 404 to everyone else.
+async function checkOwner(request, env) {
+  if (!(await allowed(env.CODE_LIMITER || env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  if (!(await isSiteOwner(request, env))) return json({ error: 'not_found' }, 404);
+  return json({ ok: true, maxBytes: OWNER_MAX_BODY, expiries: Object.keys(EXPIRY_MS) });
+}
+
+async function isSiteOwner(request, env) {
+  const key = request.headers.get('x-ashdrop-owner-key') || '';
+  return !!(env.OWNER_KEY && env.OWNER_KEY.length >= 32 && key && (await sameSecret(key, env.OWNER_KEY)));
+}
+
+// On Cloudflare, FixedLengthStream tells storage the exact size and fails if the body is shorter or longer.
+function fixedLength(stream, length) {
+  if (typeof FixedLengthStream !== 'function') return stream; // tests and other runtimes
+  const fixed = new FixedLengthStream(length);
+  stream.pipeTo(fixed.writable).catch(() => {});
+  return fixed.readable;
 }
 
 // Rate limits are keyed by IP address because anonymous users have nothing else to key on.

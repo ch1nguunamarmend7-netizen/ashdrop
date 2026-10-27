@@ -57,7 +57,7 @@ export class LinkDO {
     await this.save(rec);
     if (!keepBlob) await this.env.BLOBS.delete(blobKey(rec.id));
     // keepBlob: the Worker deletes it right after reading; the alarm is a safety net.
-    await this.state.storage.setAlarm(keepBlob ? Date.now() + 60e3 : rec.purgeAt);
+    await this.state.storage.setAlarm(keepBlob ? Date.now() + 15 * 60e3 : rec.purgeAt); // time for a big download to finish
   }
 
   async init(b) {
