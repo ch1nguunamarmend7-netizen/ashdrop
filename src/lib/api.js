@@ -27,6 +27,10 @@ export function createLink({ ct, iv, iv2, salt, authToken, expiry, maxAttempts, 
       try { body = JSON.parse(xhr.responseText); } catch {}
       if (xhr.status === 201) return resolve(body);
       if (xhr.status === 413) return reject(new Error(`That is too large for this link (${body.limit > 30e6 ? '95' : '25'} MB).`));
+      if (xhr.status === 429 && body.error === 'daily_limit') {
+        const at = new Date(body.resetAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return reject(new Error(`That would go over today's upload limit of 100 MB from this network. It resets at ${at}.`));
+      }
       if (xhr.status === 429) return reject(new Error('Too many links in a short time. Wait a minute and try again.'));
       if (xhr.status === 409) { const e = new Error('code_taken'); e.code = 'code_taken'; return reject(e); }
       reject(new Error(`Could not create the link: ${body.error || body.reason || `HTTP ${xhr.status}`}`));

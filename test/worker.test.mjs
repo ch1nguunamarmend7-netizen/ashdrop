@@ -287,3 +287,42 @@ test('upload must declare its length, and a mismatch is not stored', async () =>
   const env = makeEnv();
   assert.equal((await createAs(env, null, { size: 8, declared: 0 })).status, 400);
 });
+
+// ---------- daily upload quota ----------
+async function upload(env, { ip = '203.0.113.5', size = 1024, key = null } = {}) {
+  const headers = { 'x-ashdrop-meta': JSON.stringify({ expiry: '1h', iv: b64(rand(12)) }), 'cf-connecting-ip': ip };
+  if (key) headers['x-ashdrop-owner-key'] = key;
+  return call(env, '/api/p', { method: 'POST', headers, body: new Uint8Array(size) });
+}
+
+test('daily quota: 100 MB per network per day, then 429 until tomorrow', async () => {
+  const env = makeEnv();
+  env.OWNER_KEY = OWNER;
+  const MB25 = 25 * 1024 * 1024;
+  for (let i = 0; i < 4; i++) assert.equal((await upload(env, { size: MB25 })).status, 201, `upload ${i + 1} of 25 MB`);
+  const over = await upload(env, { size: 10 });
+  assert.equal(over.status, 429);
+  const body = await over.json();
+  assert.equal(body.error, 'daily_limit');
+  assert.ok(body.resetAt > Date.now() && body.resetAt - Date.now() <= 864e5);
+  assert.equal((await upload(env, { ip: '198.51.100.7', size: 10 })).status, 201, 'another network is not affected');
+  assert.equal((await upload(env, { size: MB25, key: OWNER })).status, 201, 'the owner is exempt');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 864e5;
+  try { assert.equal((await upload(env, { size: 10 })).status, 201, 'resets the next day'); } finally { Date.now = realNow; }
+});
+
+test('daily quota: the network address is never stored', async () => {
+  const env = makeEnv();
+  await upload(env, { ip: '203.0.113.99' });
+  for (const name of env._objects.keys()) assert.ok(!name.includes('203.0.113.99'), name);
+  const dump = JSON.stringify([...env._objects.values()].map((o) => o.state?.storage));
+  assert.ok(!dump.includes('203.0.113'));
+});
+
+test('robots: secret links are marked noindex', async () => {
+  const env = makeEnv();
+  const r = await call(env, '/p/abcdefghjk');
+  assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
+  assert.equal((await call(env, '/')).headers.get('x-robots-tag'), null);
+});

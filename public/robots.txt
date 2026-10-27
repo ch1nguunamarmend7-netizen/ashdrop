@@ -1,0 +1,6 @@
+# Ashdrop: the home and info pages may be indexed. Secret links, codes and the API must never be.
+User-agent: *
+Disallow: /p/
+Disallow: /api/
+Disallow: /code
+Allow: /

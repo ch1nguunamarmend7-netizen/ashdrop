@@ -2402,7 +2402,7 @@ function App() {
       await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
       if (linksVisible) setLinks(prev => [record, ...prev]);
       setResult({ ...sealed, id, expiry, password: pwOn, maxAttempts, kind, qrOnly, code });
-    } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That is') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
+    } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
     finally { setBusy(false); setProgress(null); }
   };
 

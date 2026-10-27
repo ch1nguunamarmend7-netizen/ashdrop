@@ -11,6 +11,7 @@ const MAX_BODY = 26 * 1024 * 1024;             // 25 MB free-tier file + small h
 const OWNER_MAX_BODY = 99_900_000;             // 95 MiB file + header + GCM tags, under the 100 MB request limit
 const EXPIRY_MS = { burn: 24 * 3600e3, '1h': 3600e3, '24h': 24 * 3600e3, '7d': 7 * 24 * 3600e3 }; // unread burn links die after 24h
 const OWNER_ONLY_EXPIRY = new Set(['7d']);
+const DAILY_QUOTA = 100 * 1024 * 1024;         // bytes one network may upload per UTC day (the owner is exempt)
 const ATTEMPTS = [1, 3, 5, 10];
 const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ID_RE = /^[a-hjkmnp-z2-9]{10}$/;
@@ -60,6 +61,8 @@ export default {
       res = new Response(res.body, res);
       if (url.pathname.startsWith('/p/')) res.headers.set('Cache-Control', 'no-store');
       if (url.pathname === '/build.json') res.headers.set('Cache-Control', 'no-cache');
+      // Secret links and the code page are never meant for search engines (robots.txt says so too).
+      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
     return res;
@@ -136,6 +139,8 @@ async function createLink(request, env) {
   if (!Number.isSafeInteger(declared) || !request.headers.has('content-length')) return json({ error: 'length_required' }, 411);
   if (declared === 0 || !request.body) return json({ error: 'empty' }, 400);
   if (declared > limit) return json({ error: 'too_large', limit }, 413);
+  const quota = owner ? null : await dailyQuota(request, env);
+  if (quota && !(await quota.take(declared))) return json({ error: 'daily_limit', limit: DAILY_QUOTA, resetAt: quota.resetAt }, 429);
 
   const id = randomId();
   const ownerToken = bytesToB64url(crypto.getRandomValues(new Uint8Array(32)));
@@ -145,6 +150,7 @@ async function createLink(request, env) {
     await env.BLOBS.put(`p/${id}`, fixedLength(request.body, declared));
   } catch {
     await env.BLOBS.delete(`p/${id}`).catch(() => {});
+    await quota?.refund(declared);
     return json({ error: 'upload_incomplete' }, 400);
   }
   const stub = env.LINKS.get(env.LINKS.idFromName(id));
@@ -160,6 +166,7 @@ async function createLink(request, env) {
   });
   if (!init.ok) {
     await env.BLOBS.delete(`p/${id}`);
+    await quota?.refund(declared);
     return json({ error: 'create_failed' }, 500);
   }
   if (code) {
@@ -172,6 +179,7 @@ async function createLink(request, env) {
       // Another live link already uses this code (about 1 in 17 trillion). Undo, and let the browser pick a new code.
       await stub.fetch('https://link/remove', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' });
       await env.BLOBS.delete(`p/${id}`);
+      await quota?.refund(declared);
       return json({ error: 'code_taken' }, 409);
     }
   }
@@ -232,6 +240,28 @@ async function openLink(request, env, id, call, ctx) {
       'x-ashdrop-expires': String(v.expiresAt),
     },
   });
+}
+
+// Daily upload quota per network. The address is never stored: it is hashed together with a random value
+// that exists for one day only (kept in its own Durable Object and then deleted), so yesterday's counters
+// cannot be linked back to anyone. Counters themselves are deleted a day later.
+async function dailyQuota(request, env) {
+  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  const now = Date.now();
+  const day = new Date(now).toISOString().slice(0, 10);
+  const resetAt = Date.parse(day + 'T00:00:00Z') + 864e5;
+  const deleteAt = resetAt + 3600e3;
+  const post = (name, body) => env.LINKS.get(env.LINKS.idFromName(name)).fetch('https://link/' + body.path, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+  }).then((r) => r.json());
+  const { value: salt } = await post(`salt:${day}`, { path: 'salt', deleteAt });
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${ip}`));
+  const name = `quota:${day}:${bytesToB64url(new Uint8Array(digest))}`;
+  return {
+    resetAt,
+    take: async (bytes) => (await post(name, { path: 'quota', bytes, limit: DAILY_QUOTA, deleteAt })).ok,
+    refund: (bytes) => post(name, { path: 'quota', bytes, refund: true, deleteAt }).catch(() => {}),
+  };
 }
 
 // POST /api/owner   header x-ashdrop-owner-key: <OWNER_KEY>

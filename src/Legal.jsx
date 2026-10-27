@@ -79,7 +79,9 @@ function Privacy() {
       <H>IP addresses and logs</H>
       <P>
         Ashdrop runs on Cloudflare. Like any web host, Cloudflare sees the IP address of everyone who connects. We use
-        it only to count requests per minute so that one person cannot flood the service; we do not store it.
+        it only to count requests per minute and uploads per day, so that one person cannot flood the service; we
+        do not store it. For the daily upload limit we keep a scrambled form of it, mixed with a random value that is
+        itself deleted after one day, so it cannot be turned back into the address. Those counters are deleted the next day.
         Cloudflare keeps short-lived request logs for us (time, address requested, response status and errors) for
         3 to 7 days so we can fix problems. The link key is never in these logs, because browsers do not send the part
         of a link after the # to any server.

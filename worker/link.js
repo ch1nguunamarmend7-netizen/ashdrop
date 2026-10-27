@@ -31,6 +31,9 @@ export class LinkDO {
       case '/code-init': return this.codeInit(body);
       case '/code-get': return this.codeGet();
       case '/code-drop': return this.codeDrop();
+      // Daily upload quota per network (see quota() in index.js). Two kinds of tiny short-lived records.
+      case '/salt': return this.salt(body);
+      case '/quota': return this.quota(body);
       default: return json({ error: 'not_found' }, 404);
     }
   }
@@ -180,6 +183,29 @@ export class LinkDO {
     return json({ ok: true });
   }
 
+  // A random value for one day. Network addresses are hashed with it, and it is deleted after the day,
+  // so the hashes can no longer be linked back to any address.
+  async salt(b) {
+    let s = await this.state.storage.get('salt');
+    if (!s) {
+      s = { value: bytesToB64url(crypto.getRandomValues(new Uint8Array(32))), deleteAt: b.deleteAt };
+      await this.state.storage.put('salt', s);
+      await this.state.storage.setAlarm(s.deleteAt);
+    }
+    return json({ value: s.value });
+  }
+
+  // Bytes uploaded today from one (hashed) network. Reserve before the upload, refund if it fails.
+  async quota(b) {
+    const q = (await this.state.storage.get('quota')) || { used: 0, deleteAt: b.deleteAt };
+    if (b.refund) q.used = Math.max(0, q.used - b.bytes);
+    else if (q.used + b.bytes > b.limit) return json({ ok: false, used: q.used });
+    else q.used += b.bytes;
+    await this.state.storage.put('quota', q);
+    await this.state.storage.setAlarm(q.deleteAt);
+    return json({ ok: true, used: q.used });
+  }
+
   async isOwner(rec, token) {
     if (typeof token !== 'string' || !token) return false;
     return safeEqual(await sha256b64(token), rec.ownerHash);
@@ -190,6 +216,12 @@ export class LinkDO {
   }
 
   async runAlarm() {
+    const tmp = (await this.state.storage.get('salt')) || (await this.state.storage.get('quota'));
+    if (tmp) {
+      if (Date.now() >= tmp.deleteAt) await this.state.storage.deleteAll();
+      else await this.state.storage.setAlarm(tmp.deleteAt);
+      return;
+    }
     const code = await this.state.storage.get('code');
     if (code) {
       if (Date.now() >= code.expiresAt) await this.state.storage.deleteAll();
