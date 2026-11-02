@@ -326,3 +326,86 @@ test('robots: secret links are marked noindex', async () => {
   assert.equal(r.headers.get('x-robots-tag'), 'noindex, nofollow');
   assert.equal((await call(env, '/')).headers.get('x-robots-tag'), null);
 });
+
+// ---------- devices: pairing and inboxes ----------
+const inboxId = () => b64(rand(16));
+const api = (env, path, body) => call(env, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+test('pairing: two devices swap cards once, a third cannot join', async () => {
+  const env = makeEnv();
+  const lookup = b64(rand(32));
+  let r = await api(env, '/api/pair', { lookup, role: 'b', card: 'cardB' });
+  assert.equal(r.status, 404, 'cannot join a pairing that does not exist');
+  r = await api(env, '/api/pair', { lookup, role: 'a', card: 'cardA' });
+  assert.deepEqual(await r.json(), { other: null });
+  r = await api(env, '/api/pair', { lookup, role: 'b', card: 'cardB' });
+  assert.deepEqual(await r.json(), { other: 'cardA' });
+  r = await api(env, '/api/pair', { lookup, role: 'a' });
+  assert.deepEqual(await r.json(), { other: 'cardB' });
+  r = await api(env, '/api/pair', { lookup, role: 'b', card: 'cardC' });
+  assert.equal(r.status, 409, 'a second joiner is refused');
+  const realNow = Date.now;
+  Date.now = () => realNow() + 11 * 60e3;
+  try { assert.equal((await api(env, '/api/pair', { lookup, role: 'b', card: 'cardB' })).status, 404, 'expires after 10 minutes'); } finally { Date.now = realNow; }
+});
+
+test('inbox: register, drop, list with token, ack', async () => {
+  const env = makeEnv();
+  const id = inboxId(), token = b64(rand(32));
+  assert.equal((await api(env, '/api/inbox/drop', { inboxId: id, msg: 'abc' })).status, 404, 'unknown inbox');
+  assert.equal((await api(env, '/api/inbox/register', { inboxId: id, token })).status, 200);
+  assert.equal((await api(env, '/api/inbox/register', { inboxId: id, token: b64(rand(32)) })).status, 409, 'someone else cannot take it over');
+  assert.equal((await api(env, '/api/inbox/drop', { inboxId: id, msg: 'hello-1' })).status, 202);
+  assert.equal((await api(env, '/api/inbox/drop', { inboxId: id, msg: 'hello-2' })).status, 202);
+  assert.equal((await api(env, '/api/inbox/drop', { inboxId: id, msg: 'not base64!' })).status, 400);
+  assert.equal((await api(env, '/api/inbox/list', { inboxId: id, token: b64(rand(32)) })).status, 403, 'wrong token');
+  const list = await (await api(env, '/api/inbox/list', { inboxId: id, token })).json();
+  assert.deepEqual(list.messages.map((m) => m.msg), ['hello-1', 'hello-2']);
+  await api(env, '/api/inbox/ack', { inboxId: id, token, ids: [list.messages[0].id] });
+  const after = await (await api(env, '/api/inbox/list', { inboxId: id, token })).json();
+  assert.deepEqual(after.messages.map((m) => m.msg), ['hello-2']);
+});
+
+test('inbox: messages expire, the inbox holds at most 50', async () => {
+  const env = makeEnv();
+  const id = inboxId(), token = b64(rand(32));
+  await api(env, '/api/inbox/register', { inboxId: id, token });
+  await api(env, '/api/inbox/drop', { inboxId: id, msg: 'soon', expiresAt: Date.now() + 1000 });
+  const realNow = Date.now;
+  Date.now = () => realNow() + 5000;
+  try { assert.equal((await (await api(env, '/api/inbox/list', { inboxId: id, token })).json()).messages.length, 0); } finally { Date.now = realNow; }
+  for (let i = 0; i < 50; i++) await api(env, '/api/inbox/drop', { inboxId: id, msg: 'm' + i });
+  assert.equal((await api(env, '/api/inbox/drop', { inboxId: id, msg: 'one-too-many' })).status, 429);
+});
+
+test('inbox: a live socket must authenticate, then gets messages pushed instantly', async () => {
+  const env = makeEnv();
+  const id = inboxId(), token = b64(rand(32));
+  await api(env, '/api/inbox/register', { inboxId: id, token });
+  // Fake the Cloudflare WebSocket pair.
+  class FakeSocket { constructor() { this.sent = []; this.closed = null; this.att = null; }
+    send(d) { this.sent.push(JSON.parse(d)); } close(code) { this.closed = code; }
+    serializeAttachment(a) { this.att = a; } deserializeAttachment() { return this.att; } }
+  let server;
+  globalThis.WebSocketPair = function () { const c = new FakeSocket(); server = new FakeSocket(); return { 0: c, 1: server }; };
+  const RealResponse = globalThis.Response;
+  globalThis.Response = class extends RealResponse { constructor(body, init = {}) { if (init.status === 101) { super(null, { status: 200 }); this.webSocket = init.webSocket; Object.defineProperty(this, 'status', { value: 101 }); } else super(body, init); } };
+  try {
+    const up = await call(env, `/api/inbox/ws?inbox=${id}`, { headers: { upgrade: 'websocket' } });
+    assert.equal(up.status, 101);
+    const obj = env._objects.get('inbox:' + id);
+    // Not signed in yet: a drop is not pushed.
+    await api(env, '/api/inbox/drop', { inboxId: id, msg: 'early' });
+    assert.equal(server.sent.length, 0);
+    await obj.webSocketMessage(server, JSON.stringify({ type: 'auth', token: b64(rand(32)) }));
+    assert.equal(server.closed, 1008, 'wrong token closes the socket');
+    server.closed = null;
+    await obj.webSocketMessage(server, JSON.stringify({ type: 'auth', token }));
+    assert.deepEqual(server.sent.at(-1), { type: 'ready' });
+    await api(env, '/api/inbox/drop', { inboxId: id, msg: 'live-one' });
+    assert.equal(server.sent.at(-1).type, 'msg');
+    assert.equal(server.sent.at(-1).message.msg, 'live-one');
+    const plain = await call(env, `/api/inbox/ws?inbox=${id}`);
+    assert.equal(plain.status, 426, 'needs an Upgrade header');
+  } finally { delete globalThis.WebSocketPair; globalThis.Response = RealResponse; }
+});

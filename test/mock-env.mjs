@@ -16,9 +16,13 @@ export function makeEnv() {
   function state() {
     // Mirrors blockConcurrencyWhile: one request at a time per object.
     let chain = Promise.resolve();
+    const sockets = [];
     return {
       storage: storage(),
       blockConcurrencyWhile(fn) { const run = chain.then(fn); chain = run.catch(() => {}); return run; },
+      // Durable Object WebSocket hibernation API, enough for tests.
+      acceptWebSocket(ws) { sockets.push(ws); },
+      getWebSockets() { return sockets.filter((w) => !w.closed); },
     };
   }
   function storage() {
@@ -27,8 +31,9 @@ export function makeEnv() {
       alarmAt: null,
       async get(k) { return structuredClone(m.get(k)); },
       async put(k, v) { m.set(k, structuredClone(v)); },
-      async delete(k) { m.delete(k); },
+      async delete(k) { for (const x of [].concat(k)) m.delete(x); },
       async deleteAll() { m.clear(); },
+      async list({ prefix = '' } = {}) { return new Map([...m].filter(([k]) => k.startsWith(prefix)).map(([k, v]) => [k, structuredClone(v)])); },
       async setAlarm(t) { this.alarmAt = t; },
     };
   }

@@ -46,7 +46,7 @@ function Email({ address, id, subject }) {
 
 const H = ({ children, id }) => <h2 id={id} className="font-display text-[22px] font-bold mt-10 mb-3 text-fg scroll-mt-24">{children}</h2>;
 const P = ({ children }) => <p className="mb-3">{children}</p>;
-const UL = ({ children }) => <ul className="mb-3 pl-5 list-disc flex flex-col gap-1.5 marker:text-ember">{children}</ul>;
+const UL = ({ children }) => <ul className="mb-3 pl-5 list-disc flex flex-col gap-1.5 marker:text-mute">{children}</ul>;
 
 function Privacy() {
   return (
@@ -87,12 +87,20 @@ function Privacy() {
         of a link after the # to any server.
       </P>
 
+      <H>Your devices</H>
+      <P>
+        If you pair devices, each one gets a random inbox number. Items you send between them wait in that inbox,
+        encrypted so only the receiving device can read them, until it opens or removes them, for at most 7 days.
+        An inbox that is not used for 90 days is deleted.
+      </P>
+
       <H>What stays on your device</H>
       <P>Your browser stores a few things locally. They are never sent to us, and you can delete them by clearing this site's data in your browser.</P>
       <UL>
         <li>Your settings, such as theme, animation speed and sharing defaults.</li>
         <li>My links: the links you sent, including their keys, so you can copy, track and revoke them. With the passcode lock on, this list is encrypted with your passcode.</li>
         <li>While you view a link, its key is kept for that tab only, so reloading the page still works.</li>
+        <li>If you pair devices: this device's name, its inbox number and keys, and the devices it is paired with.</li>
       </UL>
 
       <H>Cookies</H>
@@ -290,6 +298,7 @@ function Security() {
         <li>A password adds a second layer. The server only stores a one-way check value, and after the number of wrong tries you choose, the link is deleted.</li>
         <li>Burn links are deleted from the server in the same step that hands them out, so they can only be opened once.</li>
         <li>A typeable code (4 words) is turned into a lookup value and a key in your browser. The server stores only a hash of the lookup value and the link key locked with the code, so it cannot tell which code belongs to which link, and tries are limited per network.</li>
+        <li>Sending to your own devices is end-to-end encrypted too. Paired devices swap public keys using 4 one-time words that never reach us, and each item is encrypted to the receiving device's key. We only see that a device received something.</li>
         <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
       </UL>
 

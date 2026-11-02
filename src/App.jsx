@@ -7,6 +7,7 @@ import { createLink, getMeta, openLink, revokeLink, linkStatus, lookupCode } fro
 import { generateCode, parseCode, sealCode, openCode, CODE_WORDS } from './lib/code.js';
 import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL, OWNER_MAX_TOTAL } from './lib/bundle.js';
 import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
+import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
 
@@ -129,7 +130,7 @@ export const Logo = () => {
           <circle className="logo-spark s3" cx="13" cy="3" r=".5" fill="#fff3c4" />
         </svg>
       </span>
-      <span className="font-display text-[19px] font-bold tracking-tight">Ashdrop</span>
+      <span className="font-display text-[19px] tracking-tight max-[420px]:sr-only">Ashdrop</span>
     </div>
   );
 };
@@ -137,7 +138,7 @@ export const Logo = () => {
 function Toggle({ on, onChange, id, label }) {
   return (
     <button id={id} role="switch" aria-checked={on} aria-label={label} onClick={() => onChange(!on)}
-      className={`relative w-11 h-6 rounded-full transition-colors ${on ? 'grad-bg' : 'bg-line'}`}>
+      className={`relative w-11 h-6 rounded-full transition-colors ${on ? 'fill-on' : 'bg-line'}`}>
       <span className={`absolute top-0.5 left-0.5 h-5 w-5 rounded-full bg-fg transition-transform duration-300 ${on ? 'translate-x-5' : ''}`} style={{ transitionTimingFunction: 'var(--ease-spring)' }} />
     </button>
   );
@@ -189,6 +190,10 @@ function QR({ text, size = 200, className = '' }) {
   );
 }
 
+const FLAME_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 22c4 0 7-2.7 7-6.8 0-3.4-2.3-5.6-4-7.7-.6 1.9-1.6 3-2.8 3.5C12.6 7.6 11 4.5 8.5 2.5 8.6 6.8 5 9.4 5 14.5 5 19 8.1 22 12 22z"/></svg>;
+const LOCK_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>;
+const FILE_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>;
+const LINK_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></svg>;
 const KEYBOARD_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>;
 const WORD_COLORS = ['var(--ember)', 'var(--pink)', 'var(--violet)', 'var(--cyan)'];
 
@@ -215,7 +220,7 @@ function CodeCard({ code, password }) {
       <div className="label flex items-center gap-1.5"><span className="text-gold">{KEYBOARD_ICON}</span>Or open it with this code</div>
       <CodeWords code={code} />
       <div className="text-[12.5px] text-mute max-w-sm">On the other device, go to <span className="font-mono text-fg">{location.host}/code</span> and type these 4 words. The first 4 letters of each word are enough.{password && ' The password is still needed.'}</div>
-      <button onClick={copy} className="press rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold border border-line hover:border-gold hover:text-gold transition-colors">{copied ? 'Copied' : 'Copy code'}</button>
+      <button onClick={copy} className="press rounded-lg px-3.5 py-1.5 text-[12.5px] font-semibold border border-line hover:border-mute transition-colors">{copied ? 'Copied' : 'Copy code'}</button>
     </div>
   );
 }
@@ -306,7 +311,7 @@ export function CodePage() {
 
   return (
     <div className="min-h-full flex flex-col">
-      <div className="relative head-glow gutter max-w-6xl w-full mx-auto py-3 flex items-center gap-3 border-b border-transparent">
+      <div className="relative gutter max-w-6xl w-full mx-auto py-3 flex items-center gap-3 border-b border-line">
         <a href="/" aria-label="Ashdrop home"><Logo /></a>
         <a href="/" className="press ml-auto shrink-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line text-mute hover:text-fg hover:border-mute transition-colors">Send your own secret</a>
       </div>
@@ -317,15 +322,14 @@ export function CodePage() {
             <span className="tone-icon w-14 h-14 rounded-2xl grid place-items-center" aria-hidden="true">
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M14 10h.01M18 10h.01M7 14h10"/></svg>
             </span>
-            <div className="label"><span className="grad-text">Open with a code</span></div>
-            <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">Type the 4 <span className="grad-text">words</span></h1>
+            <h1 className="font-display text-[28px] sm:text-[34px] leading-tight">Open with a code</h1>
             <p className="text-mute text-[13.5px] max-w-sm">In order, with spaces or dashes. The first 4 letters of each word are enough.</p>
           </div>
           <div>
             <label htmlFor="code-input" className="sr-only">Code</label>
             <input id="code-input" autoFocus value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
               placeholder="e.g. tiger orbit lamp river" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="go"
-              className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-gold text-center" />
+              className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
             <div className="grid grid-cols-4 gap-1.5 mt-3" aria-live="polite">
               {slots.map((w, i) => (
                 <span key={i} style={{ '--t1': w?.word ? WORD_COLORS[i] : 'var(--warn)' }}
@@ -338,7 +342,7 @@ export function CodePage() {
             {words.some(w => !w.word) && !tooMany && <div className="text-[12px] text-warn mt-2">A word with a ? is not in the list. Check its spelling.</div>}
           </div>
           {msg && <div role="alert" className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
-          <button id="code-open" disabled={!code || busy} className="press rounded-xl py-3.5 font-display font-bold text-[16px] btn-grad disabled:opacity-50 flex items-center justify-center gap-2">
+          <button id="code-open" disabled={!code || busy} className="press rounded-xl py-3.5 font-display font-bold text-[16px] btn-primary disabled:opacity-50 flex items-center justify-center gap-2">
             {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />Finding it…</> : 'Open'}
           </button>
           <p className="text-[12px] text-mute text-center">Your browser turns the words into a lookup value and a key. The words themselves never leave this device, and nothing is opened until you confirm on the next screen.</p>
@@ -350,8 +354,239 @@ export function CodePage() {
 }
 const GONE_WHY = { burned: 'already opened', revoked: 'cancelled by the sender', expired: 'expired', locked: 'locked after wrong passwords', removed: 'removed' };
 
+/* ---------- your devices ---------- */
+const DEVICE_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="2" y="4" width="13" height="10" rx="1.5"/><path d="M5 18h7"/><rect x="17" y="8" width="5" height="12" rx="1.2"/></svg>;
+
+/* Shown on the device that starts pairing: 4 words and a QR code for the other device. */
+function PairModal({ onClose, onPaired }) {
+  const [state, setState] = useState({ phase: 'starting' });
+  useEffect(() => {
+    const ctl = new AbortController();
+    (async () => {
+      try {
+        const { words, wait } = await startPairing({ signal: ctl.signal });
+        setState({ phase: 'waiting', words });
+        const peer = await wait();
+        setState({ phase: 'done', peer });
+        onPaired?.(peer);
+      } catch (e) {
+        if (e.message !== 'cancelled') setState({ phase: 'error', msg: e.message === 'expired' ? 'Nobody joined within 10 minutes. Start again when the other device is ready.' : e.message });
+      }
+    })();
+    return () => ctl.abort();
+  }, []);
+  const url = state.words ? `${location.origin}/pair#${state.words}` : '';
+  return (
+    <Modal onClose={onClose} labelledBy="pair-title">
+      <div className="flex items-start justify-between gap-4">
+        <h2 id="pair-title" className="font-display text-2xl">Pair a device</h2>
+        <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
+      </div>
+      {state.phase === 'starting' && <p className="text-mute text-[13.5px] mt-3">Preparing…</p>}
+      {state.phase === 'waiting' && (
+        <div id="pair-waiting" className="mt-3 flex flex-col gap-4">
+          <p className="text-mute text-[13.5px]">On the other device, scan this code with the camera, or open <span className="font-mono text-fg">{location.host}/pair</span> and type the words.</p>
+          <div className="flex justify-center"><QR text={url} size={190} /></div>
+          <CodeWords code={state.words} />
+          <div className="flex items-center justify-center gap-2 text-[12.5px] text-mute">
+            <span className="w-3.5 h-3.5 rounded-full border-2 border-mute border-t-transparent animate-spin" aria-hidden="true" />Waiting for the other device. The words work for 10 minutes.
+          </div>
+          <LocalOnlyNote />
+        </div>
+      )}
+      {state.phase === 'done' && (
+        <div id="pair-done" className="mt-4 flex flex-col gap-3">
+          <p className="text-[14px]">Paired with <span className="font-semibold">{state.peer.name}</span>.</p>
+          <p className="text-mute text-[13px]">After you create a link on either device, send it to the other one with a single tap. It opens there right away if Ashdrop is open, or waits in its inbox.</p>
+          <button onClick={onClose} className="press mt-1 rounded-lg py-2.5 font-semibold btn-primary">Done</button>
+        </div>
+      )}
+      {state.phase === 'error' && <div role="alert" className="mt-4 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2.5">{state.msg}</div>}
+    </Modal>
+  );
+}
+
+/* After a link is created: one tap sends it to a paired device. */
+function SendToDevices({ result, onPair }) {
+  const [peers] = useState(getPeers);
+  const [status, setStatus] = useState({});
+  const send = async (p) => {
+    setStatus(s => ({ ...s, [p.inboxId]: 'sending' }));
+    try {
+      await sendToPeer(p, { id: result.id, keyStr: result.keyStr, label: result.label, kind: result.kind, expiry: result.expiry, expiresAt: result.expiresAt, password: !!result.password });
+      setStatus(s => ({ ...s, [p.inboxId]: 'sent' }));
+    } catch (e) { setStatus(s => ({ ...s, [p.inboxId]: e.message })); }
+  };
+  return (
+    <div id="send-devices" className="mt-3 rounded-xl border border-line p-3.5">
+      <div className="text-[13px] font-semibold flex items-center gap-2"><span className="text-mute">{DEVICE_ICON}</span>Send to your devices</div>
+      {peers.length === 0 ? (
+        <div className="mt-2 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-[12.5px] text-mute">Pair your phone or computer once, then send links to it with one tap.</span>
+          <button id="pair-from-result" onClick={onPair} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line hover:border-mute transition-colors">Pair a device</button>
+        </div>
+      ) : (
+        <div className="mt-2.5 flex flex-wrap gap-2">
+          {peers.map(p => {
+            const st = status[p.inboxId];
+            return (
+              <button key={p.inboxId} id={`send-${p.inboxId}`} onClick={() => send(p)} disabled={st === 'sending' || st === 'sent'}
+                className={`press inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium border transition-colors ${st === 'sent' ? 'border-ok/50 text-ok' : 'border-line hover:border-mute'}`}>
+                {st === 'sending' ? <span className="w-3.5 h-3.5 rounded-full border-2 border-mute border-t-transparent animate-spin" aria-hidden="true" /> : st === 'sent' ? <span aria-hidden="true">✓</span> : null}
+                {st === 'sent' ? `Sent to ${p.name}` : `Send to ${p.name}`}
+              </button>
+            );
+          })}
+        </div>
+      )}
+      {Object.values(status).filter(v => v && !['sending', 'sent'].includes(v)).map((m, i) => <div key={i} role="alert" className="mt-2 text-[12.5px] text-warn">{m}</div>)}
+    </div>
+  );
+}
+
+/* Items other devices sent here. */
+function InboxPanel({ items, onOpen, onDismiss }) {
+  if (!items.length) return null;
+  return (
+    <section id="inbox" className="rounded-2xl border border-line bg-panel mb-5" aria-label="Sent to this device">
+      <div className="px-4 py-3 border-b border-line text-[13.5px] font-semibold">Sent to this device</div>
+      <ul>
+        {items.map(it => (
+          <li key={it.msgId} className="flex flex-wrap items-center gap-3 px-4 py-3 border-b border-line last:border-0">
+            <span className="w-9 h-9 rounded-lg grid place-items-center shrink-0 border border-line bg-well text-mute" aria-hidden="true">{it.kind === 'file' ? FILE_ICON : LINK_ICON}</span>
+            <div className="min-w-0 flex-1">
+              <div className="text-[13.5px] font-medium truncate">{it.label || 'A secret'}</div>
+              <div className="text-[12px] text-mute">From {it.fromName}, {ago(it.sentAt || Date.now())}{it.expiry === 'burn' ? '. Burns when opened' : ''}{it.password ? '. Needs the password' : ''}</div>
+            </div>
+            <div className="flex gap-1.5 shrink-0">
+              <button onClick={() => onOpen(it)} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold btn-primary">Open</button>
+              <button onClick={() => onDismiss(it)} className="press rounded-lg px-2.5 py-1.5 text-[12.5px] text-mute hover:text-fg">Remove</button>
+            </div>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/* Pops up when something arrives while Ashdrop is open. */
+function ArrivalCard({ item, more, onOpen, onLater }) {
+  return (
+    <div className="fixed z-[65] right-4 left-4 sm:left-auto sm:w-[380px] pop" style={{ bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))' }} role="status" id="arrival">
+      <div className="rounded-xl border border-line bg-panel p-4 shadow-2xl">
+        <div className="text-[12.5px] text-mute">From {item.fromName}{more ? ` (+${more} more)` : ''}</div>
+        <div className="text-[14.5px] font-semibold mt-0.5 truncate">{item.label || 'A secret'}</div>
+        <div className="text-[12px] text-mute mt-0.5">{item.expiry === 'burn' ? 'Burns when opened.' : 'Opens until it expires.'}{item.password ? ' Needs the password.' : ''}</div>
+        <div className="flex gap-2 mt-3">
+          <button id="arrival-open" onClick={onOpen} className="press flex-1 rounded-lg py-2 text-[13px] font-semibold btn-primary">Open</button>
+          <button onClick={onLater} className="press rounded-lg px-3 py-2 text-[13px] font-medium border border-line hover:border-mute">Later</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Settings → Your devices */
+function DevicesSettings({ onPair, peersVersion, onChange }) {
+  const [peers, setPeers] = useState(getPeers);
+  const [name, setName] = useState(() => (hasDevice() ? null : defaultDeviceName()));
+  useEffect(() => { setPeers(getPeers()); }, [peersVersion]);
+  useEffect(() => { if (name === null) getDevice().then(d => setName(d.name)); }, [name]);
+  const saveName = async () => { const n = (name || '').trim() || defaultDeviceName(); await getDevice(); renameDevice(n); setName(n); };
+  return (
+    <>
+      <Row title="This device" sub="The name your other devices see when you send them something.">
+        <div className="flex gap-2 sm:justify-end">
+          <label htmlFor="device-name" className="sr-only">Device name</label>
+          <input id="device-name" value={name || ''} onChange={(e) => setName(e.target.value)} onBlur={saveName} maxLength={40}
+            className="w-full sm:w-52 bg-well border border-line rounded-lg px-3 py-2 text-[13px] outline-hidden focus:border-mute" />
+        </div>
+      </Row>
+      <Row stack title="Paired devices" sub={peers.length ? 'Links you create can be sent to these with one tap.' : 'None yet. Pair your phone or another computer to send links to it with one tap.'}>
+        {peers.length > 0 && (
+          <ul id="peer-list" className="flex flex-col gap-1.5">
+            {peers.map(p => (
+              <li key={p.inboxId} className="flex items-center gap-3 rounded-lg border border-line px-3 py-2">
+                <span className="text-mute">{DEVICE_ICON}</span>
+                <span className="flex-1 text-[13px] font-medium truncate">{p.name}</span>
+                <button onClick={() => { removePeer(p.inboxId); setPeers(getPeers()); onChange?.(); }} className="text-[12.5px] text-mute hover:text-ember">Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <div className="flex flex-wrap gap-2 mt-1">
+          <button id="pair-open" onClick={onPair} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary">Pair a device</button>
+          <a href="/pair" className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">I have words from another device</a>
+        </div>
+      </Row>
+    </>
+  );
+}
+
+/* ashdrop.cc/pair: the device that joins. */
+export function PairPage({ initialWords = '' }) {
+  const [input, setInput] = useState(initialWords.replace(/-/g, ' '));
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [peer, setPeer] = useState(null);
+  const { words, code } = parseCode(input);
+  const slots = Array.from({ length: CODE_WORDS }, (_, i) => words[i] || null);
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!code || busy) return;
+    setBusy(true); setMsg('');
+    try { setPeer(await joinPairing(code)); } catch (err) { setMsg(err.message); }
+    setBusy(false);
+  };
+  return (
+    <div className="min-h-full flex flex-col">
+      <div className="relative gutter max-w-6xl w-full mx-auto py-3 flex items-center gap-3 border-b border-line">
+        <a href="/" aria-label="Ashdrop home"><Logo /></a>
+        <a href="/" className="press ml-auto shrink-0 rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line text-mute hover:text-fg hover:border-mute transition-colors">Open Ashdrop</a>
+      </div>
+      <main className="flex-1 gutter py-10 sm:py-16">
+        <div className="pop w-full max-w-xl mx-auto rounded-3xl border border-line bg-panel p-6 sm:p-8 flex flex-col gap-5">
+          {peer ? (
+            <div id="pair-joined" className="flex flex-col gap-3">
+              <h1 className="font-display text-[28px] leading-tight">Paired with {peer.name}</h1>
+              <p className="text-mute text-[14px]">After you create a link on either device, send it to the other one with a single tap from the result screen.</p>
+              <a href="/" className="press mt-2 rounded-xl py-3 text-center font-semibold btn-primary">Open Ashdrop</a>
+            </div>
+          ) : (
+            <form onSubmit={submit} className="flex flex-col gap-5">
+              <div>
+                <h1 className="font-display text-[28px] sm:text-[32px] leading-tight">Pair this device</h1>
+                <p className="text-mute text-[14px] mt-2">{initialWords ? 'Check that these are the words shown on your other device, then pair.' : 'Type the 4 words shown on your other device, under Settings → Pair a device.'}</p>
+              </div>
+              <div>
+                <label htmlFor="pair-input" className="sr-only">Pairing words</label>
+                <input id="pair-input" autoFocus={!initialWords} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
+                  placeholder="four words" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+                  className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
+                <div className="grid grid-cols-4 gap-1.5 mt-3">
+                  {slots.map((w, i) => (
+                    <span key={i} className={`h-9 rounded-lg border font-mono text-[12.5px] grid place-items-center truncate px-1 ${!w ? 'border-dashed border-line text-mute' : w.word ? 'border-line bg-raised' : 'border-warn/50 text-warn'}`}>
+                      {!w ? i + 1 : w.word || `${w.typed}?`}
+                    </span>
+                  ))}
+                </div>
+              </div>
+              {msg && <div role="alert" className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
+              <button id="pair-join" disabled={!code || busy} className="press rounded-xl py-3.5 font-display text-[16px] btn-primary disabled:opacity-50 flex items-center justify-center gap-2">
+                {busy ? <><span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />Pairing…</> : 'Pair'}
+              </button>
+              <p className="text-[12px] text-mute text-center">The words never leave this device. They encrypt a name card that the two devices swap, so Ashdrop cannot read it or pair itself in between.</p>
+            </form>
+          )}
+        </div>
+      </main>
+      <Footer className="gutter pb-8 pt-2" />
+    </div>
+  );
+}
+
 /* ---------- output modal ---------- */
-function OutputModal({ result, onClose, onOpenRecipient }) {
+function OutputModal({ result, onClose, onOpenRecipient, onPair }) {
   const [copied, setCopied] = useState(false);
   const linkRef = useRef(null);
   const link = `${location.origin}/p/${result.id}#${result.keyStr}`;
@@ -385,7 +620,7 @@ function OutputModal({ result, onClose, onOpenRecipient }) {
         </div>
         )}
         {!result.qrOnly && <div className="flex gap-2">
-          <button onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'btn-grad'}`}>
+          <button onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'btn-primary'}`}>
             {copied === true ? 'Copied to clipboard' : copied === 'select' ? 'Selected · press Ctrl/⌘ + C' : 'Copy link'}
           </button>
           <button id="show-qr" onClick={() => setShowQr(v => !v)} aria-expanded={showQr} title="Show QR code"
@@ -408,11 +643,12 @@ function OutputModal({ result, onClose, onOpenRecipient }) {
         {fullQr && <QRFullscreen link={link} burn={result.expiry === 'burn'} onClose={() => setFullQr(false)} />}
       </div>
       {result.code && <CodeCard code={result.code} password={result.password} />}
+      <SendToDevices result={result} onPair={onPair} />
       <LocalOnlyNote className="mt-3" />
       <p className="text-[12.5px] text-mute mt-2">The <span className="text-cyan font-mono">#fragment</span> is the decryption key. Browsers never send it to a server, so Ashdrop cannot read this {result.kind}.</p>
 
       <div className={`mt-4 rounded-xl p-3.5 flex gap-3 ${result.expiry === 'burn' ? 'bg-[var(--ember-soft)] border border-ember/50' : 'bg-well border border-line'}`}>
-        <span className={`text-lg leading-none ${result.expiry === 'burn' ? 'flicker' : ''}`} aria-hidden="true">🔥</span>
+        <span className={`mt-0.5 shrink-0 ${result.expiry === 'burn' ? 'text-ember' : 'text-mute'}`}>{FLAME_ICON}</span>
         <div className="text-[13px]">
           <div className="font-semibold">{result.expiry === 'burn' ? 'Burns after the first view' : `Expires in ${exp.label}`}</div>
           <div className="text-mute">{result.expiry === 'burn'
@@ -424,7 +660,7 @@ function OutputModal({ result, onClose, onOpenRecipient }) {
 
       {result.password && (
         <div className="mt-3 rounded-xl p-3.5 flex gap-3 bg-well border border-line">
-          <span className="text-lg leading-none" aria-hidden="true">🔒</span>
+          <span className="mt-0.5 shrink-0 text-mute">{LOCK_ICON}</span>
           <div className="text-[13px]">
             <div className="font-semibold">Locks out after {result.maxAttempts} wrong password{result.maxAttempts > 1 ? 's' : ''}</div>
             <div className="text-mute">The server releases no ciphertext until the password checks out. {result.maxAttempts === 1 ? 'One miss' : `Miss ${result.maxAttempts} times`} and it is deleted for good, so a leaked link alone is not enough.</div>
@@ -546,7 +782,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
         {state === 'loading'
           ? <div className="flex items-center gap-3 text-mute text-[14px]"><span className="w-5 h-5 rounded-full border-2 border-ember border-t-transparent animate-spin" />Checking the link…</div>
           : <div className="max-w-md text-center flex flex-col items-center gap-3">
-              <div className="text-5xl" aria-hidden="true">🔗</div>
+              <span className="text-mute [&_svg]:w-10 [&_svg]:h-10">{LINK_ICON}</span>
               <h1 className="font-display text-[26px] font-bold">{state === 'nokey' ? 'This link is incomplete' : 'Could not reach Ashdrop'}</h1>
               <p className="text-mute text-[13.5px]">{state === 'nokey' ? 'The part after the # is missing. That part is the key, so the message cannot be opened without it. Ask the sender to copy the whole link again.' : 'Check your connection and reload the page. Nothing has been opened yet.'}</p>
               <button onClick={onExit} className="press mt-2 rounded-xl px-5 py-2.5 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember transition-colors">Go to Ashdrop</button>
@@ -563,8 +799,8 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
   return (
     <div className="fixed inset-0 z-[55] bg-ink overflow-y-auto fade-in" style={{ paddingTop: 'env(safe-area-inset-top, 0px)', paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
       <div className="pointer-events-none absolute inset-0" aria-hidden="true"
-        style={{ background: 'radial-gradient(50% 40% at 15% 0%, rgba(255,122,61,.10), transparent 70%), radial-gradient(50% 40% at 90% 100%, rgba(92,214,224,.08), transparent 70%)' }} />
-      <div className="relative head-glow gutter max-w-6xl mx-auto py-3 flex items-center gap-3 border-b border-transparent">
+        style={{ display: 'none' }} />
+      <div className="relative gutter max-w-6xl mx-auto py-3 flex items-center gap-3 border-b border-line">
         <Logo />
         <span className="hidden sm:flex items-center gap-2 font-mono text-[11.5px] text-mute min-w-0 truncate">
           <span className="w-2 h-2 rounded-full bg-ok shrink-0" aria-hidden="true" />{location.host}/p/{id}<span className="text-cyan">#••••••</span>
@@ -575,17 +811,17 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
       <main className="relative gutter py-10 sm:py-16 flex flex-col gap-6">
         {state === 'intro' && (
           <div className={`${card} pop text-center flex flex-col items-center gap-4`}>
-            <span className="w-16 h-16 rounded-2xl grid place-items-center" style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))', boxShadow: '0 16px 50px -14px rgba(196,107,255,.6)' }} aria-hidden="true">
+            <span className="w-16 h-16 rounded-2xl grid place-items-center" style={{ background: 'var(--ember)' }} aria-hidden="true">
               <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinecap="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 7l9 6 9-6"/></svg>
             </span>
-            <div className="label text-ember">Someone sent you a secret</div>
-            <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">This {what} {fate}</h1>
+            <h1 className="font-display text-[28px] sm:text-[34px] leading-tight">Someone sent you a {what}</h1>
+            <p className="text-mute text-[14px] -mt-2">It {fate}.</p>
             <div className="flex flex-wrap justify-center gap-2">
               <span className="text-[11.5px] rounded-full border border-line px-2.5 py-1 text-mute">End-to-end encrypted</span>
               {m.needsPassword && <span className="text-[11.5px] rounded-full border border-line px-2.5 py-1 text-mute">Password · {m.maxAttempts} tries</span>}
               <span className="text-[11.5px] rounded-full border border-ember/40 px-2.5 py-1 text-ember">{m.expiry === 'burn' ? 'One view only' : `Expires in ${timeLeft(m.expiresAt - Date.now())}`}</span>
             </div>
-            <button id="reveal" onClick={reveal} disabled={busy} className="press ember-glow mt-2 rounded-xl px-7 py-3.5 bg-ember text-ink font-display font-bold text-[17px] hover:brightness-110 transition">
+            <button id="reveal" onClick={reveal} disabled={busy} className="press mt-2 rounded-xl px-7 py-3.5 btn-burn font-display text-[17px]">
               {busy ? (dlPct !== null ? `Downloading ${Math.round(dlPct * 100)}%` : 'Decrypting…') : m.needsPassword ? 'Continue' : `Reveal ${what}`}
             </button>
             <p className="text-[12px] text-mute max-w-sm">Nothing is fetched until you click, so chat-app link previews cannot burn it. Decryption happens only in this browser.</p>
@@ -594,7 +830,6 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
 
         {state === 'password' && (
           <div className={`${card} step-fwd ${burning ? 'burn-away' : ''}`}>
-            <div className="label">Protected {what}</div>
             <h1 className="font-display text-[26px] sm:text-[30px] font-bold mt-1">Enter the password</h1>
             <p className="text-mute text-[13px] mt-1">The sender should have given it to you separately.</p>
             <div className="flex items-center gap-2 mt-5" aria-label={`${left} of ${m.maxAttempts} attempts left`}>
@@ -605,7 +840,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <label htmlFor="rec-pw" className="sr-only">Password</label>
               <input id="rec-pw" type="password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
                 className="flex-1 min-w-0 bg-well border border-line rounded-xl px-4 py-3 font-mono text-[14px] outline-hidden focus:border-cyan" autoComplete="off" />
-              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-grad disabled:opacity-50">{busy ? (dlPct !== null ? `${Math.round(dlPct * 100)}%` : 'Checking…') : 'Unlock'}</button>
+              <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-primary disabled:opacity-50">{busy ? (dlPct !== null ? `${Math.round(dlPct * 100)}%` : 'Checking…') : 'Unlock'}</button>
             </form>
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
             <p className="text-[12px] text-mute mt-4">Your browser turns the password into a check token. The password and the key in the link never leave this device.</p>
@@ -626,7 +861,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
               <>
                 <pre className="mt-4 rounded-2xl bg-well border border-line p-4 font-mono text-[12.5px] leading-[1.7] overflow-auto max-h-[50vh] whitespace-pre"
                   style={{ borderLeft: `3px solid ${colorOf(out.lang)}` }}>{out.text}</pre>
-                <button onClick={copyText} className={`press mt-3 w-full rounded-xl py-3 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'btn-grad'}`}>{copied === true ? 'Copied' : copied === 'fail' ? 'Select the text to copy it' : 'Copy text'}</button>
+                <button onClick={copyText} className={`press mt-3 w-full rounded-xl py-3 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'btn-primary'}`}>{copied === true ? 'Copied' : copied === 'fail' ? 'Select the text to copy it' : 'Copy text'}</button>
               </>
             ) : out.kind === 'files' ? (
               <>
@@ -642,7 +877,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
                     );
                   })}
                 </ul>
-                <button id="download-all" onClick={() => save('ashdrop-files.zip', makeZip(out.items))} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download all ({out.items.length} files, .zip)</button>
+                <button id="download-all" onClick={() => save('ashdrop-files.zip', makeZip(out.items))} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-primary transition">Download all ({out.items.length} files, .zip)</button>
               </>
             ) : (
               <>
@@ -652,15 +887,15 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
                       {(() => { const ts = TYPE_STYLE[typeOf(out.fileName, out.mime)]; return <span className="w-12 h-12 rounded-xl grid place-items-center font-mono text-[11px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }}>{ts.t}</span>; })()}
                       <div className="min-w-0"><div className="font-mono text-[13px] break-all">{out.fileName}</div><div className="text-mute text-[12px] mt-0.5">{fmtBytes(out.size)} · decrypted intact</div></div>
                     </div>}
-                <button onClick={() => save()} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-grad transition">Download file</button>
+                <button onClick={() => save()} className="press mt-3 w-full rounded-xl py-3 font-semibold btn-primary transition">Download file</button>
               </>
             )}
             {msg && <div role="alert" className="mt-3 text-[12.5px] text-warn">{msg}</div>}
             {burnedOnServer ? (
               <div className="mt-4 rounded-xl border border-ember/50 bg-[var(--ember-soft)] p-4 flex flex-wrap items-center gap-3">
-                <span className="text-xl flicker" aria-hidden="true">🔥</span>
+                <span className="text-ember shrink-0">{FLAME_ICON}</span>
                 <div className="text-[13px] flex-1 min-w-[180px]"><div className="font-semibold">Already deleted from the server</div><div className="text-mute">It exists only in this tab now. Leave or burn it and it is gone for good.</div></div>
-                <button id="burn-now" onClick={burnNow} className="press rounded-lg px-4 py-2 text-[13px] font-semibold bg-ember text-ink">Burn it now</button>
+                <button id="burn-now" onClick={burnNow} className="press rounded-lg px-4 py-2 text-[13px] font-semibold btn-burn">Burn it now</button>
               </div>
             ) : (
               <div className="mt-4 text-[12.5px] text-mute text-center">This link stays readable for {timeLeft(m.expiresAt - Date.now())}, then it is purged.</div>
@@ -670,7 +905,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
 
         {(state === 'burned' || state === 'lockedout' || state === 'gone') && (
           <div className={`${card} pop text-center flex flex-col items-center gap-3`}>
-            <div className="text-5xl" aria-hidden="true">{state === 'burned' ? '🔥' : state === 'lockedout' ? '🔒' : '🪦'}</div>
+            <span className={`[&_svg]:w-10 [&_svg]:h-10 ${state === 'burned' ? 'text-ember' : 'text-mute'}`}>{state === 'burned' ? FLAME_ICON : state === 'lockedout' ? LOCK_ICON : LINK_ICON}</span>
             <h1 className="font-display text-[26px] sm:text-[30px] font-bold">
               {state === 'burned' ? 'Burned. Nothing left.' : state === 'lockedout' ? 'This link has been destroyed' : 'Nothing here anymore'}
             </h1>
@@ -708,7 +943,6 @@ function ProModal({ onClose, initialGb = 10, reason, onSubscribe }) {
     <Modal onClose={onClose} labelledBy="pro-title">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="label text-ember">Ashdrop Pro · Encrypted Vault</div>
           <h2 id="pro-title" className="font-display text-2xl font-bold mt-1">{reason ? 'Make room in your vault' : 'Pay for the bytes you keep'}</h2>
         </div>
         <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
@@ -820,7 +1054,7 @@ function PreviewModal({ item, onClose, onDownload }) {
         {state.phase === 'error' && <div className="text-warn text-[13px]">Could not decrypt: {state.msg}</div>}
       </div>
       {state.phase !== 'decrypting' && state.phase !== 'error' && (
-        <button onClick={onDownload} className="mt-4 w-full rounded-lg py-2.5 font-semibold btn-grad transition-colors flex items-center justify-center gap-2">
+        <button onClick={onDownload} className="mt-4 w-full rounded-lg py-2.5 font-semibold btn-primary transition-colors flex items-center justify-center gap-2">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M12 4v12M6 10l6 6 6-6M5 20h14"/></svg>
           Download decrypted file
         </button>
@@ -1002,7 +1236,7 @@ function Vault({ files, setFiles, onPro, onShare, cap = FREE_CAP, plan, folders,
   const free = Math.max(0, cap - used);
   const pct = Math.min(100, (used / cap) * 100);
   const level = pct >= 100 ? 'full' : pct >= 80 ? 'near' : 'ok';
-  const barColor = level === 'full' ? 'var(--ember)' : level === 'near' ? 'linear-gradient(90deg, var(--cyan), var(--warn))' : 'linear-gradient(90deg, var(--cyan), #c46bff)';
+  const barColor = level === 'full' ? 'var(--ember)' : level === 'near' ? 'var(--warn)' : 'var(--fg)';
   const neededGb = (extra) => Math.min(100, Math.max(plan && plan.tier === 'pro' ? plan.gb + 5 : 10, Math.ceil((used + extra) / 1e9 / 5) * 5));
   const isPro = plan && plan.tier === 'pro';
 
@@ -1038,7 +1272,7 @@ function Vault({ files, setFiles, onPro, onShare, cap = FREE_CAP, plan, folders,
     <div className="flex flex-col gap-5">
       {FEATURES.recovery && !recoverySaved && (
         <div className="pop rounded-2xl border border-cyan/40 px-4 sm:px-5 py-4 flex flex-wrap items-center gap-3"
-          style={{ background: 'linear-gradient(120deg, rgb(var(--c-cyan) / .10), rgb(196 107 255 / .08))' }}>
+          style={{ background: 'var(--panel)' }}>
           <span className="w-10 h-10 rounded-xl grid place-items-center shrink-0 bg-well border border-cyan/40 text-cyan" aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="8" cy="15" r="4"/><path d="M10.8 12.2 20 3M17 6l3 3M14 9l2 2"/></svg>
           </span>
@@ -1046,7 +1280,7 @@ function Vault({ files, setFiles, onPro, onShare, cap = FREE_CAP, plan, folders,
             <div className="font-semibold">Save your recovery key</div>
             <div className="text-mute">If you forget your password, it is the only way back into your vault. Ashdrop cannot reset it for you.</div>
           </div>
-          <button id="open-recovery" onClick={onRecovery} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-grad transition shrink-0">Get my key</button>
+          <button id="open-recovery" onClick={onRecovery} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary transition shrink-0">Get my key</button>
         </div>
       )}
       {/* usage */}
@@ -1088,7 +1322,7 @@ function Vault({ files, setFiles, onPro, onShare, cap = FREE_CAP, plan, folders,
         onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && input.current.click()}
         role="button" tabIndex={0} aria-label="Add files to your vault"
         className={`rounded-2xl border-2 border-dashed px-5 py-6 flex items-center gap-4 cursor-pointer transition-all duration-300 ${drag ? 'border-ember bg-[var(--ember-soft)] scale-[1.01]' : 'border-line hover:border-mute'}`}>
-        <span className="w-12 h-12 rounded-xl grid place-items-center shrink-0" style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))' }} aria-hidden="true">
+        <span className="w-12 h-12 rounded-xl grid place-items-center shrink-0" style={{ background: 'var(--ember)' }} aria-hidden="true">
           <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="2.2" strokeLinecap="round"><path d="M12 16V4M6 10l6-6 6 6M5 20h14"/></svg>
         </span>
         <div className="min-w-0">
@@ -1252,7 +1486,6 @@ function RecoveryModal({ keyStr, saved, onConfirm, onClose }) {
     <Modal onClose={onClose} labelledBy="rk-title">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="label text-cyan">Recovery key</div>
           <h2 id="rk-title" className="font-display text-2xl font-bold mt-1">Your only way back in</h2>
         </div>
         <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
@@ -1321,7 +1554,6 @@ function HowContent({ onShare, onVault }) {
   return (
     <div className="stagger max-w-4xl mx-auto flex flex-col gap-14">
       <section style={{ '--i': 0 }} className="text-center flex flex-col items-center gap-4 pt-2">
-        <div className="label text-ember">How Ashdrop works</div>
         <h1 className="font-display text-[34px] sm:text-[54px] font-bold leading-[1.04] max-w-2xl">We can't read what you send. <GradText>Here's why.</GradText></h1>
         <p className="text-mute text-[15px] max-w-xl">Everything is locked in your browser before it leaves your device. The key to unlock it rides inside the link, in a part browsers never send to any server.</p>
       </section>
@@ -1359,7 +1591,7 @@ function HowContent({ onShare, onVault }) {
               icon={<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan)" strokeWidth="2"><rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/></svg>} />
           </div>
           <div className="keytrack relative mt-8 h-12 rounded-full border-2 border-dashed border-cyan/40" aria-hidden="true">
-            <span className="pk inline-flex items-center gap-1.5 rounded-full bg-well border border-cyan/60 px-2.5 h-7 text-[12px] text-cyan font-mono whitespace-nowrap">🔑 #key</span>
+            <span className="pk inline-flex items-center gap-1.5 rounded-full bg-well border border-cyan/60 px-2.5 h-7 text-[12px] text-cyan font-mono whitespace-nowrap">#key</span>
           </div>
           <p className="text-[12.5px] text-mute text-center mt-3">The key travels inside the link you send them, by chat, email or QR code. It never touches our servers.</p>
         </div>
@@ -1371,8 +1603,8 @@ function HowContent({ onShare, onVault }) {
           {[['Pick what to share', 'Paste text or code, or choose a file. Nothing has left your device yet.'],
             ['Lock it and get a link', 'Your browser encrypts it, uploads the locked bytes and hands you a link with the key on the end.'],
             ['They open it, it burns', 'Their browser unlocks it. Burn links are deleted from the server the moment they are opened.']].map(([t, d], i) => (
-            <li key={t} className="lift rounded-2xl border p-5" style={{ background: `linear-gradient(160deg, ${mix([POP.ember, POP.violet, POP.cyan][i], 14)}, var(--panel) 70%)`, borderColor: mix([POP.ember, POP.violet, POP.cyan][i], 35, 'var(--line)') }}>
-              <span className="w-9 h-9 rounded-full grid place-items-center font-mono text-[14px] font-bold text-ink" style={{ background: [POP.ember, POP.violet, POP.cyan][i] }}>{i + 1}</span>
+            <li key={t} className="lift rounded-2xl border p-5" style={{ background: 'var(--panel)', borderColor: 'var(--line)' }}>
+              <span className="w-8 h-8 rounded-full grid place-items-center text-[13px] font-semibold border border-line text-fg">{i + 1}</span>
               <div className="font-semibold text-[15px] mt-3">{t}</div>
               <div className="text-[13px] text-mute mt-1">{d}</div>
             </li>
@@ -1387,7 +1619,7 @@ function HowContent({ onShare, onVault }) {
             <thead><tr className="bg-panel">
               <th className="text-left font-semibold px-4 py-3 border-b border-line"> </th>
               <th className="text-left font-semibold px-4 py-3 border-b border-line">Free</th>
-              <th className="text-left font-bold px-4 py-3 border-b border-line text-ink" style={{ background: 'linear-gradient(120deg, var(--ember), #b56bff)' }}>Pro</th>
+              <th className="text-left font-bold px-4 py-3 border-b border-line text-ink" style={{ background: 'var(--ember)' }}>Pro</th>
             </tr></thead>
             <tbody>
               {rows.map(([k, f, p]) => (
@@ -1417,11 +1649,11 @@ function HowContent({ onShare, onVault }) {
       </section>
 
       <section className="rounded-3xl border border-line p-8 text-center flex flex-col items-center gap-4"
-        style={{ '--i': 6, background: 'linear-gradient(135deg, rgb(var(--c-ember) / .12), rgb(196 107 255 / .10) 50%, rgb(var(--c-cyan) / .10))' }}>
+        style={{ '--i': 6, background: 'var(--panel)' }}>
         <h2 className="font-display text-[26px] sm:text-[34px] font-bold">Try it with something real</h2>
         <p className="text-mute text-[14px] max-w-md">No account needed. Send your first burn link in about ten seconds.</p>
         <div className="flex flex-wrap justify-center gap-3">
-          <button onClick={onShare} className="press ember-glow rounded-xl px-6 py-3 bg-ember text-ink font-display font-bold text-[16px] hover:brightness-110 transition">Share something</button>
+          <button onClick={onShare} className="press rounded-xl px-6 py-3 btn-primary font-display text-[16px]">Share something</button>
           {FEATURES.vaultFiles && <button onClick={onVault} className="press rounded-xl px-6 py-3 font-semibold border border-line bg-panel hover:border-mute transition-colors">Open your vault</button>}
         </div>
       </section>
@@ -1430,9 +1662,10 @@ function HowContent({ onShare, onVault }) {
 }
 
 /* ---------- why ashdrop ---------- */
-const POP = { ember: 'var(--ember)', gold: '#f5b83d', cyan: 'var(--cyan)', violet: '#b56bff', green: 'var(--ok)', pink: '#ff5fa2' };
+// One quiet tone for the explainer pages; ember stays reserved for burning and sealing.
+const POP = { ember: 'var(--mute)', gold: 'var(--mute)', cyan: 'var(--mute)', violet: 'var(--mute)', green: 'var(--mute)', pink: 'var(--mute)' };
 const mix = (c, pct, base = 'var(--panel)') => `color-mix(in srgb, ${c} ${pct}%, ${base})`;
-const GradText = ({ children }) => <span className="grad-text">{children}</span>;
+const GradText = ({ children }) => <>{children}</>;
 function WhyIcon({ kind, c }) {
   const common = { width: 26, height: 26, viewBox: '0 0 24 24', fill: 'none', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', 'aria-hidden': true, stroke: c };
   if (kind === 'lock') return (
@@ -1469,8 +1702,7 @@ function WhyAshdrop({ onShare }) {
   return (
     <div className="stagger max-w-4xl mx-auto flex flex-col gap-14">
       <section style={{ '--i': 0 }} className="text-center flex flex-col items-center gap-4 pt-2">
-        <div className="label text-ember">Why Ashdrop</div>
-        <h1 className="font-display text-[34px] sm:text-[54px] font-bold leading-[1.04] max-w-2xl">Sharing a secret should <GradText>not leave a trail.</GradText></h1>
+        <h1 className="font-display text-[34px] sm:text-[54px] font-bold leading-[1.04] max-w-2xl">Sharing a secret should not leave a trail.</h1>
         <p className="text-mute text-[15px] max-w-xl">Most ways of sending a password or a private file make copies you never think about. Ashdrop makes exactly one, and then it is gone.</p>
       </section>
 
@@ -1489,7 +1721,7 @@ function WhyAshdrop({ onShare }) {
           <div className="text-[12.5px] text-mute">Six places it might still live next year.</div>
         </div>
         <div className="rounded-3xl border border-ember/40 p-5 sm:p-6 flex flex-col gap-4"
-          style={{ background: 'linear-gradient(140deg, rgb(var(--c-ember) / .10), rgb(196 107 255 / .06) 60%, transparent)' }}>
+          style={{ background: 'var(--panel)' }}>
           <div className="label text-ember">With Ashdrop</div>
           <div className="relative rounded-2xl bg-well border border-line px-4 py-3 font-mono text-[12.5px] overflow-hidden">
             <span className="burn-loop inline-block">DB_PASSWORD=correct-horse-9</span>
@@ -1507,7 +1739,7 @@ function WhyAshdrop({ onShare }) {
         <h2 className="font-display text-[26px] sm:text-[32px] font-bold">Six reasons people switch</h2>
         <div className="stagger mt-5 grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {reasons.map(([icon, c, t, d], i) => (
-            <div key={t} style={{ '--i': i, background: `linear-gradient(160deg, ${mix(c, 16)}, var(--panel) 70%)`, borderColor: mix(c, 35, 'var(--line)') }}
+            <div key={t} style={{ '--i': i, background: 'var(--panel)', borderColor: 'var(--line)' }}
               className="group lift relative overflow-hidden rounded-2xl border p-5 flex flex-col gap-3">
               <span className="absolute -right-8 -top-8 w-28 h-28 rounded-full blur-2xl opacity-40 group-hover:opacity-70 transition-opacity duration-500" style={{ background: c }} aria-hidden="true" />
               <span className="relative w-12 h-12 rounded-xl grid place-items-center border group-hover:scale-110 group-hover:-rotate-6 transition-transform duration-300"
@@ -1527,7 +1759,7 @@ function WhyAshdrop({ onShare }) {
             <thead><tr className="bg-panel">
               <th className="text-left font-semibold px-4 py-3 border-b border-line w-[28%]"> </th>
               {['Chat apps', 'Email', 'Cloud drive link'].map(h => <th key={h} className="text-left font-semibold px-4 py-3 border-b border-line text-mute">{h}</th>)}
-              <th className="text-left font-bold px-4 py-3 border-b border-ember/50 text-ink" style={{ background: 'linear-gradient(120deg, var(--ember), #b56bff)' }}>Ashdrop</th>
+              <th className="text-left font-bold px-4 py-3 border-b border-ember/50 text-ink" style={{ background: 'var(--ember)' }}>Ashdrop</th>
             </tr></thead>
             <tbody className="stagger">
               {compare.map(([k, vals], i) => (
@@ -1544,13 +1776,13 @@ function WhyAshdrop({ onShare }) {
         </div>
       </section>
 
-      <section style={{ '--i': 4, background: 'linear-gradient(135deg, rgb(var(--c-ember) / .16), rgb(181 107 255 / .14) 45%, rgb(var(--c-cyan) / .14))' }}
+      <section style={{ '--i': 4, background: 'var(--panel)' }}
         className="relative overflow-hidden rounded-3xl border border-line p-8 text-center flex flex-col items-center gap-4">
         <span className="blob" style={{ background: POP.pink, left: '-40px', top: '-50px' }} aria-hidden="true" />
         <span className="blob" style={{ background: POP.cyan, right: '-40px', bottom: '-60px', animationDelay: 'calc(-4s * var(--spd))' }} aria-hidden="true" />
         <h2 className="relative font-display text-[26px] sm:text-[34px] font-bold">Send your next secret <GradText>the clean way</GradText></h2>
         <p className="relative text-mute text-[14px] max-w-md">It takes about ten seconds, and nobody needs an account.</p>
-        <button onClick={onShare} className="press ember-glow rounded-xl px-6 py-3 bg-ember text-ink font-display font-bold text-[16px] hover:brightness-110 transition relative">Share something</button>
+        <button onClick={onShare} className="press rounded-xl px-6 py-3 btn-primary font-display text-[16px] relative">Share something</button>
       </section>
     </div>
   );
@@ -1588,11 +1820,11 @@ function Seg({ options, value, onChange, label, id, small }) {
   return (
     <div className="relative grid gap-1 p-1 rounded-xl bg-well border border-line" role="radiogroup" aria-label={label}
       style={{ gridTemplateColumns: `repeat(${n}, minmax(0, 1fr))` }}>
-      <span className="absolute top-1 bottom-1 left-1 rounded-lg grad-bg shadow-xs transition-transform duration-500" aria-hidden="true"
+      <span className="absolute top-1 bottom-1 left-1 rounded-lg fill-on shadow-xs transition-transform duration-500" aria-hidden="true"
         style={{ width: `calc((100% - 8px - ${(n - 1) * 4}px) / ${n})`, transform: `translateX(calc(${i} * (100% + 4px)))`, transitionTimingFunction: 'var(--ease-out)' }} />
       {options.map(o => (
         <button key={String(o.v)} id={`${id}-${o.v}`} role="radio" aria-checked={o.v === value} onClick={() => onChange(o.v)}
-          className={`relative z-10 rounded-lg ${small ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'} font-medium transition-colors duration-300 truncate px-1 ${o.v === value ? 'on-grad font-semibold' : 'text-mute hover:text-fg'}`}>
+          className={`relative z-10 rounded-lg ${small ? 'py-1.5 text-[12px]' : 'py-2 text-[13px]'} font-medium transition-colors duration-300 truncate px-1 ${o.v === value ? 'on-fill font-semibold' : 'text-mute hover:text-fg'}`}>
           {o.icon && <span className="mr-1.5" aria-hidden="true">{o.icon}</span>}{o.label}
         </button>
       ))}
@@ -1617,7 +1849,7 @@ function Section({ title, children, i, tone }) {
   const [t1, t2] = tone === 'danger' ? ['var(--ember)', 'var(--ember)'] : SECTION_TONES[i % SECTION_TONES.length];
   return (
     <section style={{ '--i': i, '--t1': t1, '--t2': t2 }} className={`tone-top rounded-2xl border bg-panel px-5 sm:px-6 py-2 ${tone === 'danger' ? 'border-ember/40' : 'border-line'}`}>
-      <h2 className="label pt-4 tone-text">{title}</h2>
+      <h2 className="font-display text-[15px] pt-5 pb-1">{title}</h2>
       {children}
     </section>
   );
@@ -1671,7 +1903,7 @@ function PasscodeForm({ mode, needCurrent, onSubmit, submitLabel, idPrefix = 'pc
         <input id={`${idPrefix}-confirm`} type="password" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} placeholder="Repeat it" className={field} />
       </>}
       {err && <div role="alert" className="text-[12.5px] text-warn">{err}</div>}
-      <button id={`${idPrefix}-submit`} disabled={busy} className="press rounded-xl py-3 font-semibold btn-grad transition disabled:opacity-60 flex items-center justify-center gap-2">
+      <button id={`${idPrefix}-submit`} disabled={busy} className="press rounded-xl py-3 font-semibold btn-primary transition disabled:opacity-60 flex items-center justify-center gap-2">
         {busy && <span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />}{busy ? 'Working…' : submitLabel}
       </button>
     </form>
@@ -1691,7 +1923,7 @@ function LinksGate({ stage, count, onSet, onUnlock, onSkip, onForgot }) {
   const [forgot, setForgot] = useState(false);
   return (
     <div className="pop max-w-md mx-auto rounded-3xl border border-line bg-panel p-6 sm:p-8 flex flex-col gap-4">
-      <span className="w-14 h-14 rounded-2xl grid place-items-center mx-auto" style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))' }}><LockIcon /></span>
+      <span className="w-14 h-14 rounded-2xl grid place-items-center mx-auto" style={{ background: 'var(--ember)' }}><LockIcon /></span>
       <div className="text-center">
         <h2 className="font-display text-[24px] font-bold">{stage === 'set' ? 'Lock your sent links' : 'My links is locked'}</h2>
         <p className="text-mute text-[13px] mt-1">
@@ -1733,7 +1965,6 @@ function PasscodeModal({ mode, needCurrent, onSubmit, onClose }) {
     <Modal onClose={onClose} labelledBy="pc-title">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <div className="label text-cyan">My links</div>
           <h2 id="pc-title" className="font-display text-2xl font-bold mt-1">{titles[mode]}</h2>
         </div>
         <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
@@ -1816,7 +2047,7 @@ function LinksPanel({ links, onRevoke, onOpen, onNew, refreshKey, onLock }) {
                     <div className="text-[11.5px] text-mute flex flex-wrap items-center gap-x-2">
                       <span className="font-mono">/p/{l.id}</span><span aria-hidden="true">·</span><span>sent {ago(l.createdAt)}</span>
                       {live && <><span aria-hidden="true">·</span><span className="tabular">{l.expiry === 'burn' ? 'burns on open, ' : ''}{timeLeft(l.st.expiresAt - Date.now())} left</span></>}
-                      {l.password && <><span aria-hidden="true">·</span><span>🔒{wrong ? ` ${wrong} wrong ${wrong === 1 ? 'try' : 'tries'}` : ''}</span></>}
+                      {l.password && <><span aria-hidden="true">·</span><span>password{wrong ? `, ${wrong} wrong ${wrong === 1 ? 'try' : 'tries'}` : ''}</span></>}
                     </div>
                     {l.code && live && <div className="mt-1.5 flex"><CodeWords code={l.code} size="sm" /></div>}
                   </div>
@@ -1919,7 +2150,7 @@ function SpeedDial({ value, onChange }) {
         onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onKeyDown={onKey}>
         <defs>
           <linearGradient id="dial-grad" x1="0" y1="1" x2="1" y2="0">
-            <stop offset="0%" stopColor="var(--cyan)" /><stop offset="55%" stopColor="#c46bff" /><stop offset="100%" stopColor="var(--ember)" />
+            <stop offset="0%" stopColor="var(--mute)" /><stop offset="100%" stopColor="var(--ember)" />
           </linearGradient>
         </defs>
         {/* fine ticks */}
@@ -1965,7 +2196,7 @@ function MotionDemo() {
   return (
     <div className="h-8 rounded-lg bg-well border border-line relative overflow-hidden" aria-hidden="true">
       <span className="absolute top-1/2 -translate-y-1/2 w-5 h-5 rounded-full motion-demo"
-        style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))' }} />
+        style={{ background: 'var(--ember)' }} />
     </div>
   );
 }
@@ -1990,19 +2221,19 @@ function OwnerAccess({ on, onChange }) {
   return (
     <Row stack title="Run this site?" sub="Paste your owner key to unlock bigger links (95 MB) and 7-day expiry on this device. Visitors don't need this.">
       {!open
-        ? <div><button id="owner-open" onClick={() => setOpen(true)} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-gold hover:text-gold transition-colors">Enter owner key</button></div>
+        ? <div><button id="owner-open" onClick={() => setOpen(true)} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">Enter owner key</button></div>
         : <form onSubmit={save} className="flex flex-col sm:flex-row gap-2">
             <label htmlFor="owner-key" className="sr-only">Owner key</label>
             <input id="owner-key" type="password" autoFocus value={key} onChange={(e) => setKey(e.target.value)} placeholder="Owner key" autoComplete="off"
-              className="flex-1 min-w-0 bg-well border border-line rounded-lg px-3 py-2.5 font-mono text-[13px] outline-hidden focus:border-gold" />
-            <button id="owner-save" disabled={busy || key.trim().length < 32} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-grad disabled:opacity-50">{busy ? 'Checking…' : 'Save'}</button>
+              className="flex-1 min-w-0 bg-well border border-line rounded-lg px-3 py-2.5 font-mono text-[13px] outline-hidden focus:border-mute" />
+            <button id="owner-save" disabled={busy || key.trim().length < 32} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary disabled:opacity-50">{busy ? 'Checking…' : 'Save'}</button>
           </form>}
       {msg && <div role="alert" className="text-[12.5px] text-warn mt-2">{msg}</div>}
     </Row>
   );
 }
 
-function Settings({ ownerOn, onOwnerChange, settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
+function Settings({ onPair, peersVersion, onPeersChange, ownerOn, onOwnerChange, settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
   const [confirm, setConfirm] = useState(null); // 'cancel' | 'wipe' | 'reset'
   const set = (k, v) => setSettings(prev => ({ ...prev, [k]: v }));
   const isPro = plan.tier === 'pro';
@@ -2094,6 +2325,10 @@ function Settings({ ownerOn, onOwnerChange, settings, setSettings, plan, onCance
         )}
       </Section>
 
+      <Section title="Your devices" i={4}>
+        <DevicesSettings onPair={onPair} peersVersion={peersVersion} onChange={onPeersChange} />
+      </Section>
+
       <Section title="Owner access" i={4}>
         <OwnerAccess on={ownerOn} onChange={onOwnerChange} />
       </Section>
@@ -2103,13 +2338,13 @@ function Settings({ ownerOn, onOwnerChange, settings, setSettings, plan, onCance
           <div className="flex sm:justify-end">
             {signedIn
               ? <button id="sign-out" onClick={onSignOut} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">Sign out</button>
-              : <button id="sign-in" onClick={onSignIn} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-grad transition">Sign in</button>}
+              : <button id="sign-in" onClick={onSignIn} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary transition">Sign in</button>}
           </div>
         </Row>}
         {FEATURES.recovery && <Row title="Recovery key" sub={recoverySaved ? 'Saved. A new key cancels the old one.' : 'Not saved yet. Without it, a forgotten password means a lost vault.'}>
           <div className="flex sm:justify-end items-center gap-2 flex-wrap">
             {!recoverySaved && <span className="text-[11.5px] font-semibold text-warn">Not saved</span>}
-            <button id="view-recovery" onClick={onRecovery} className={`press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition ${recoverySaved ? 'border border-line hover:border-mute' : 'btn-grad'}`}>{recoverySaved ? 'View key' : 'Save key'}</button>
+            <button id="view-recovery" onClick={onRecovery} className={`press rounded-lg px-3.5 py-2 text-[13px] font-semibold transition ${recoverySaved ? 'border border-line hover:border-mute' : 'btn-primary'}`}>{recoverySaved ? 'View key' : 'Save key'}</button>
             {recoverySaved && <button id="new-recovery" onClick={onNewRecovery} className="press rounded-lg px-3 py-2 text-[13px] text-mute hover:text-fg">Make new</button>}
           </div>
         </Row>}
@@ -2172,7 +2407,7 @@ function Stepper({ labels, idx, maxIdx, onJump }) {
             <button onClick={() => canJump && onJump(i)} disabled={!canJump} aria-current={here ? 'step' : undefined}
               className={`flex items-center gap-2 min-w-0 ${canJump ? 'cursor-pointer hover:text-fg' : 'cursor-default'}`}>
               <span className={`w-7 h-7 rounded-full grid place-items-center text-[12px] font-mono font-semibold shrink-0 transition-all duration-300
-                ${here ? 'grad-bg on-grad scale-110 shadow-[0_0_0_4px_rgba(255,95,162,.2)]' : done ? 'bg-ember/20 text-ember border border-ember/50' : 'bg-panel text-mute border border-line'}`}>
+                ${here ? 'fill-on on-fill' : done ? 'bg-raised text-fg border border-line' : 'bg-panel text-mute border border-line'}`}>
                 <span key={done ? 'd' : 'n'} className={done ? 'check-pop' : ''}>{done ? '✓' : i + 1}</span>
               </span>
               <span className={`text-[12.5px] font-medium truncate hidden sm:block ${here ? 'text-fg' : 'text-mute'}`}>{label}</span>
@@ -2180,7 +2415,7 @@ function Stepper({ labels, idx, maxIdx, onJump }) {
             {i < labels.length - 1 && (
               <span className="relative h-0.5 flex-1 min-w-3 rounded-full bg-line overflow-hidden" aria-hidden="true">
                 <span className="absolute inset-0 rounded-full origin-left transition-transform duration-500"
-                  style={{ transform: `scaleX(${done ? 1 : 0})`, background: 'linear-gradient(90deg, var(--ember), var(--pink), var(--violet))', transitionTimingFunction: 'var(--ease-out)' }} />
+                  style={{ transform: `scaleX(${done ? 1 : 0})`, background: 'var(--fg)', transitionTimingFunction: 'var(--ease-out)' }} />
               </span>
             )}
           </li>
@@ -2202,7 +2437,6 @@ function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0, t1 = 'var(
       <span className="flex flex-wrap gap-1.5">
         {examples.map(x => <span key={x} className="tone-chip font-mono text-[11px] border rounded-md px-2 py-0.5">{x}</span>)}
       </span>
-      <span className="tone-text mt-auto text-[13px] font-semibold inline-flex items-center gap-1">Choose <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span></span>
     </button>
   );
 }
@@ -2230,6 +2464,20 @@ function App() {
   const [pwOn, setPwOn] = useState(() => loadSettings().defaultPw);
   const [qrOnly, setQrOnly] = useState(false);
   const [codeOn, setCodeOn] = useState(false);
+  // Your devices: pairing, and items other devices sent to this one.
+  const [pairOpen, setPairOpen] = useState(false);
+  const [peersVersion, setPeersVersion] = useState(0);
+  const [inbox, setInbox] = useState([]);
+  const [arrival, setArrival] = useState(null);
+  useEffect(() => {
+    if (!getPeers().length) return;
+    return listenInbox((items) => {
+      setInbox(prev => [...prev, ...items.filter(it => !prev.some(p => p.msgId === it.msgId))]);
+      setArrival({ item: items[items.length - 1], more: items.length - 1 });
+    });
+  }, [peersVersion]);
+  const openInboxItem = (it) => { setArrival(null); setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); setRecipientOf({ id: it.id, keyStr: it.keyStr }); };
+  const dismissInboxItem = (it) => { setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); };
   const [progress, setProgress] = useState(null); // upload progress 0..1 while a big link is sent
   // Site owner mode: bigger links and 7-day expiry, unlocked by the owner key saved in Settings.
   const [ownerOn, setOwnerOn] = useState(() => !!getOwnerKey());
@@ -2401,7 +2649,7 @@ function App() {
       const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
       await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
       if (linksVisible) setLinks(prev => [record, ...prev]);
-      setResult({ ...sealed, id, expiry, password: pwOn, maxAttempts, kind, qrOnly, code });
+      setResult({ ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code });
     } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -2416,7 +2664,6 @@ function App() {
     protect: ['How should it disappear?', 'Choose when the link dies and whether it needs a password.'],
   };
   const [title, sub] = headings[step];
-  const eyebrow = kind ? `Step ${idx + 1} of ${flow.length}` : 'Step 1';
 
   const BackBtn = () => (
     <button onClick={() => go(prev)} className="rounded-xl px-4 py-3 text-[14px] font-semibold border border-line text-mute hover:text-fg hover:border-mute transition-colors">← Back</button>
@@ -2425,18 +2672,19 @@ function App() {
   return (
     <div className="min-h-full">
       {/* header */}
-      <header className="head-glow sticky z-40 bg-ink/80 backdrop-blur-sm border-b border-transparent" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
+      <header className="sticky z-40 bg-ink/95 backdrop-blur-sm border-b border-line" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
         <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-2 sm:gap-3">
           <button onClick={() => { setView('share'); }} aria-label="Ashdrop home"><Logo /></button>
           {ownerOn && <span id="owner-chip" title="Owner key active on this device: links up to 95 MB, 7-day expiry" style={{ '--t1': 'var(--gold)' }} className="tone-chip hidden sm:inline-flex border rounded-full px-2 py-0.5 text-[11px] font-semibold">Owner</span>}
           <nav className="mx-auto overflow-x-auto no-scrollbar min-w-0" aria-label="Sections">
             <div className="relative grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
-              <span className="absolute top-1 bottom-1 left-1 rounded-lg grad-bg transition-all duration-500" aria-hidden="true"
+              <span className="absolute top-1 bottom-1 left-1 rounded-lg fill-on transition-all duration-500" aria-hidden="true"
                 style={{ width: 'calc((100% - 12px) / 2)', transform: `translateX(calc(${Math.max(navIdx, 0)} * (100% + 4px))) scale(${navIdx < 0 ? 0.85 : 1})`, opacity: navIdx < 0 ? 0 : 1, transitionTimingFunction: 'var(--ease-out)' }} />
               {NAV.map(([id, label]) => (
                 <button key={id} id={`nav-${id}`} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
-                  className={`relative z-10 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'on-grad font-semibold' : 'text-mute hover:text-fg'}`}>
+                  className={`relative z-10 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'on-fill font-semibold' : 'text-mute hover:text-fg'}`}>
                   {label}
+                  {id === 'vault' && inbox.length > 0 && <span id="inbox-badge" className="ml-1.5 inline-grid place-items-center min-w-4 h-4 px-1 rounded-full bg-ember text-[10.5px] font-semibold text-[#1a0d05] align-[1px]" aria-label={`${inbox.length} new`}>{inbox.length}</span>}
                 </button>
               ))}
             </div>
@@ -2450,10 +2698,10 @@ function App() {
             <span className={`transition-transform duration-500 ${view === 'settings' ? 'rotate-90' : 'group-hover:rotate-45'}`} style={{ transitionTimingFunction: 'var(--ease-out)' }}>{GEAR}</span>
           </button>
           {!FEATURES.pro && FEATURES.accounts && !signedIn
-            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-grad transition whitespace-nowrap">Sign in</button>
+            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-primary transition whitespace-nowrap">Sign in</button>
             : !FEATURES.pro ? null
             : FEATURES.accounts && !signedIn
-            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-grad transition whitespace-nowrap">Sign in</button>
+            ? <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold btn-primary transition whitespace-nowrap">Sign in</button>
             : plan.tier === 'pro'
               ? <button onClick={() => setView('settings')} className="shrink-0 rounded-lg px-3 py-2 text-[12px] font-semibold border border-ember/50 text-ember whitespace-nowrap">PRO</button>
               : <button onClick={() => setPro({ gb: 10 })} className="press shrink-0 rounded-lg px-3 py-2 text-[13px] font-semibold bg-ember text-ink hover:brightness-110 transition whitespace-nowrap">Pro<span className="hidden sm:inline"> Upgrade</span></button>}
@@ -2467,7 +2715,7 @@ function App() {
               <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">Settings</h1>
               <p className="text-mute text-[14px] mt-2">Saved on this device. Nothing here is sent to Ashdrop.</p>
             </div>
-            <Settings settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme} ownerOn={ownerOn} onOwnerChange={setOwnerOn}
+            <Settings settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme} ownerOn={ownerOn} onOwnerChange={setOwnerOn} onPair={() => setPairOpen(true)} peersVersion={peersVersion} onPeersChange={() => setPeersVersion(v => v + 1)}
               onCancelPlan={() => { setPlan({ tier: 'free' }); toast('Pro canceled. Billing has stopped.'); }}
               onUpgrade={(gb) => setPro({ gb })}
               signedIn={signedIn} onSignOut={() => { setSignedIn(false); setView('share'); toast('Signed out. Your vault key was cleared from this tab.'); }}
@@ -2490,8 +2738,9 @@ function App() {
                 <p className="text-mute text-[14px] mt-2">{vaultTab === 'links' ? 'Every link you sent, live. See when it is opened and revoke it early.' : `${FEATURES.pro && plan.tier === 'pro' ? `${plan.gb} GB on Pro.` : '5 GB.'} Files are encrypted in your browser. Vault sync is not built yet, so files stay in this tab until you close it.`}</p>
               </div>
               {FEATURES.vaultFiles && signedIn && <div className="w-full sm:w-64"><Seg id="vault-tab" label="Vault section" value={vaultTab} onChange={setVaultTab}
-                options={[{ v: 'files', label: 'Files' }, { v: 'links', label: linksVisible ? `My links${links.length ? ` · ${links.length}` : ''}` : 'My links 🔒' }]} /></div>}
+                options={[{ v: 'files', label: 'Files' }, { v: 'links', label: linksVisible ? `My links${links.length ? ` · ${links.length}` : ''}` : 'My links (locked)' }]} /></div>}
             </div>
+            {vaultTab === 'links' && <InboxPanel items={inbox} onOpen={openInboxItem} onDismiss={dismissInboxItem} />}
             {signedIn
               ? (vaultTab === 'links'
                 ? <div key="links" className="step-fwd">{
@@ -2505,12 +2754,12 @@ function App() {
                     folders={folders} setFolders={setFolders} folderColors={folderColors} setFolderColors={setFolderColors} recoverySaved={recoverySaved} onRecovery={() => setShowRecovery(true)} /></div>)
               : (
                 <div className="pop rounded-2xl border border-line bg-panel p-8 text-center flex flex-col items-center gap-3">
-                  <span className="w-14 h-14 rounded-2xl grid place-items-center" style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))' }} aria-hidden="true">
+                  <span className="w-14 h-14 rounded-2xl grid place-items-center" style={{ background: 'var(--ember)' }} aria-hidden="true">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="2.2"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
                   </span>
                   <div className="font-display text-[22px] font-bold">Your vault is locked</div>
                   <div className="text-mute text-[13px] max-w-sm">Sign in to unlock it. Your files are decrypted only in this browser, after you sign in.</div>
-                  <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press mt-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-grad transition">Sign in</button>
+                  <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press mt-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary transition">Sign in</button>
                 </div>
               )}
           </div>
@@ -2519,8 +2768,7 @@ function App() {
             <Stepper labels={flow.map(id => LABELS[id])} idx={idx} maxIdx={maxIdx} onJump={(i) => go(flow[i])} />
 
             <div key={step} className={dir === 'back' ? 'step-back' : 'step-fwd'}>
-              <div className="label"><span className="grad-text">{eyebrow}</span></div>
-              <h1 className="font-display text-[30px] sm:text-[40px] font-bold leading-[1.1] mt-2">{title.slice(0, title.lastIndexOf(' ') + 1)}<span className="grad-text">{title.slice(title.lastIndexOf(' ') + 1)}</span></h1>
+              <h1 className="font-display text-[28px] sm:text-[36px] leading-[1.1]">{title}</h1>
               <p className="text-mute text-[14px] mt-2">{sub}</p>
             </div>
 
@@ -2540,7 +2788,6 @@ function App() {
                     <span className="block font-semibold text-[14.5px]">Got a code?</span>
                     <span className="block text-mute text-[12.5px]">Someone sent you 4 words instead of a link. Type them here to open it.</span>
                   </span>
-                  <span className="tone-text text-[13px] font-semibold shrink-0">Open <span className="inline-block transition-transform duration-300 group-hover:translate-x-1">→</span></span>
                 </a>
                 <p className="sm:col-span-2 text-[12.5px] text-mute text-center" style={{ '--i': 3 }}>{FEATURES.vaultFiles && <>Want to keep files instead? <button onClick={() => setView('vault')} className="text-fg underline underline-offset-2 hover:text-ember">Open your vault</button> · </>}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button></p>
               </div>
@@ -2573,8 +2820,8 @@ function App() {
             {/* STEP 2: content */}
             {step === 'content' && (
               <div key="s2" className={`${dir === 'back' ? 'step-back' : 'step-fwd'} flex flex-col gap-4`}>
-                <section className="min-w-0 rounded-2xl overflow-hidden border border-transparent" aria-label="Content"
-                  style={{ background: 'linear-gradient(var(--panel), var(--panel)) padding-box, linear-gradient(120deg, var(--ember), #c46bff 50%, var(--cyan)) border-box' }}>
+                <section className="min-w-0 rounded-2xl overflow-hidden border border-line" aria-label="Content"
+                  style={{ background: 'var(--panel)' }}>
                   <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line">
                     <span className="text-[12px] font-mono truncate min-w-0 flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full shrink-0" style={{ background: kind === 'paste' ? colorOf(lang) : 'var(--cyan)' }} aria-hidden="true" />
@@ -2587,7 +2834,7 @@ function App() {
 
                   {kind === 'paste' ? (
                     <div className="relative flex bg-well min-h-[320px]"
-                      style={{ backgroundImage: 'radial-gradient(60% 70% at 0% 0%, rgba(255,122,61,.10), transparent 70%), radial-gradient(60% 70% at 100% 100%, rgba(92,214,224,.09), transparent 70%)' }}>
+                      >
                       <div className="select-none text-right font-mono text-[12.5px] leading-[1.7] text-mute/50 py-4 pl-3 pr-3 border-r border-line tabular" aria-hidden="true">
                         {Array.from({ length: lines }, (_, i) => <div key={i}>{i + 1}</div>)}
                       </div>
@@ -2599,7 +2846,7 @@ function App() {
                         <div className="absolute inset-0 pointer-events-none grid place-items-center p-6 text-center">
                           <div className="flex flex-col items-center gap-3">
                             <div className="w-14 h-14 rounded-2xl grid place-items-center"
-                              style={{ background: 'linear-gradient(135deg, var(--ember), #c46bff 55%, var(--cyan))', boxShadow: '0 12px 40px -10px rgba(196,107,255,.55)' }} aria-hidden="true">
+                              style={{ background: 'var(--ember)' }} aria-hidden="true">
                               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                 <rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/>
                               </svg>
@@ -2707,7 +2954,7 @@ function App() {
                 <div className="flex gap-3">
                   <BackBtn />
                   <button id="next" onClick={next}
-                    className={`press flex-1 rounded-xl py-3 font-semibold text-[15px] transition-all duration-300 ${hasContent ? 'btn-grad' : 'bg-panel text-mute border border-line'}`}>
+                    className={`press flex-1 rounded-xl py-3 font-semibold text-[15px] transition-all duration-300 ${hasContent ? 'btn-primary' : 'bg-panel text-mute border border-line'}`}>
                     Next →
                   </button>
                 </div>
@@ -2740,7 +2987,7 @@ function App() {
                 <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--pink)', '--t2': 'var(--violet)' }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-start gap-3">
-                      <span className="mt-0.5 text-pink shrink-0" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
+                      <span className="mt-0.5 text-mute shrink-0" aria-hidden="true"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span>
                       <div>
                       <div className="text-[13.5px] font-semibold">Password + lockout</div>
                       <div className="text-[12px] text-mute">Wrong guesses destroy the link</div>
@@ -2761,7 +3008,7 @@ function App() {
                         <div className="flex gap-1 p-0.5 rounded-lg bg-well border border-line" role="radiogroup" aria-labelledby="att-label">
                           {[1, 3, 5, 10].map(n => (
                             <button key={n} id={`att-${n}`} role="radio" aria-checked={maxAttempts === n} onClick={() => setMaxAttempts(n)}
-                              className={`w-8 py-1 rounded-md font-mono text-[12px] tabular transition-colors ${maxAttempts === n ? 'grad-bg on-grad font-semibold' : 'text-mute hover:text-fg'}`}>{n}</button>
+                              className={`w-8 py-1 rounded-md font-mono text-[12px] tabular transition-colors ${maxAttempts === n ? 'fill-on on-fill font-semibold' : 'text-mute hover:text-fg'}`}>{n}</button>
                           ))}
                         </div>
                         <span className="text-[12.5px] text-mute">wrong tries</span>
@@ -2773,7 +3020,7 @@ function App() {
                 <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--cyan)', '--t2': 'var(--violet)' }}>
                   <div className="flex items-center justify-between gap-3">
                     <div className="flex items-start gap-3">
-                      <span className="mt-0.5 text-cyan shrink-0">{QR_ICON}</span>
+                      <span className="mt-0.5 text-mute shrink-0">{QR_ICON}</span>
                       <div>
                         <div className="text-[13.5px] font-semibold">QR code only</div>
                         <div className="text-[12px] text-mute">For handing a secret over in person. The link is shown only as a QR code, never as text, so it never lands in a chat or on a clipboard.</div>
@@ -2795,7 +3042,7 @@ function App() {
                     <Toggle id="code-toggle" label="Typeable code" on={codeOn} onChange={setCodeOn} />
                   </div>
                   {codeOn && (
-                    <div className="rise mt-3 rounded-lg border border-gold/40 bg-gold/10 px-3 py-2 text-[12px]">
+                    <div className="rise mt-3 rounded-lg border border-warn/40 bg-warn/10 px-3 py-2 text-[12px]">
                       A code is shorter than a link, so it is easier to guess. It is fine for quick hand-offs between your own devices.
                       {pwOn ? ' Your password adds the missing strength.' : ' For anything very sensitive, add a password too.'}
                     </div>
@@ -2807,7 +3054,7 @@ function App() {
                 <div className="flex gap-3">
                   <BackBtn />
                   <button id="create" onClick={create} disabled={busy}
-                    className={`press flex-1 rounded-xl py-3.5 px-5 btn-grad font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
+                    className={`press flex-1 rounded-xl py-3.5 px-5 btn-burn font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
                     {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create Secure Link'}
                   </button>
                 </div>
@@ -2816,17 +3063,18 @@ function App() {
             )}
 
             <div className="flex items-center justify-center gap-2 text-[12px] text-mute">
-              <span className="live-dot" aria-hidden="true" />
-              AES-256-GCM in this tab · zero-knowledge
+              Encrypted in this tab with AES-256-GCM before anything is sent.
             </div>
           </div>
         )}
       </main>
       <Footer className="gutter pb-8 pt-2" />
 
-      {result && <OutputModal result={result}
+      {result && <OutputModal result={result} onPair={() => setPairOpen(true)}
         onClose={() => { setResult(null); startOver(); }}
         onOpenRecipient={() => { setRecipientOf({ id: result.id, keyStr: result.keyStr }); setResult(null); startOver(); }} />}
+      {pairOpen && <PairModal onClose={() => setPairOpen(false)} onPaired={() => setPeersVersion(v => v + 1)} />}
+      {arrival && !recipientOf && <ArrivalCard item={arrival.item} more={arrival.more} onOpen={() => openInboxItem(arrival.item)} onLater={() => setArrival(null)} />}
       {recipientOf && <RecipientPage key={recipientOf.id} id={recipientOf.id} keyStr={recipientOf.keyStr} onExit={() => setRecipientOf(null)} />}
       {passModal && <PasscodeModal mode={passModal.mode} needCurrent={passModal.needCurrent} onSubmit={submitPassModal} onClose={() => setPassModal(null)} />}
       {showRecovery && <RecoveryModal keyStr={recoveryKey} saved={recoverySaved} onClose={() => setShowRecovery(false)}

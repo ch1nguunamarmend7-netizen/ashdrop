@@ -13,6 +13,7 @@
   --color-cyan: rgb(var(--c-cyan));
   --color-warn: rgb(var(--c-warn));
   --color-ok: rgb(var(--c-ok));
+  --color-raised: var(--raised);
   --color-pink: rgb(var(--c-pink));
   --color-violet: rgb(var(--c-violet));
   --color-gold: rgb(var(--c-gold));
@@ -31,17 +32,19 @@
 /* Ashdrop tokens, motion and component styles (ported from the prototype). */
   /* Layout: sticky ash-black header, two-column workspace (editor | control panel) collapsing to one column on phones; modals float over a blurred scrim. */
   :root {
-    --ink: #0d0f12;        /* page ground, zinc-black with a cool bias */
-    --panel: #15181d;      /* raised surfaces */
-    --well: #0a0c0f;       /* editor well */
-    --line: #262b33;       /* hairlines */
-    --mute: #8a93a3;       /* secondary text, slate */
-    --fg: #e6e9ee;         /* primary text */
-    --ember: #ff7a3d;      /* accent: the burn */
-    --ember-soft: rgba(255,122,61,.14);
-    --cyan: #5cd6e0;       /* secondary accent: the key */
-    --warn: #f5b84a;
-    --ok: #57d18c;
+    /* Warm ash greys, one accent. Ember is kept for the main action and anything that burns. */
+    --ink: #161514;        /* page ground: charcoal with a warm, ashy bias */
+    --panel: #1d1c1a;      /* surfaces */
+    --raised: #252320;     /* controls, selected states */
+    --well: #121110;       /* editor well */
+    --line: #33302c;       /* hairlines */
+    --mute: #958f87;       /* secondary text */
+    --fg: #ece8e2;         /* primary text */
+    --ember: #ff6a2b;      /* the accent */
+    --ember-soft: rgba(255,106,43,.12);
+    --cyan: #8fb8c4;       /* quiet secondary: links, focus */
+    --warn: #e2a63e;
+    --ok: #6cc08f;
     --pink: #ff5fa2;       /* extra accents for a livelier palette */
     --violet: #b56bff;
     --gold: #f5b83d;
@@ -49,10 +52,10 @@
     --grad-cool: linear-gradient(100deg, #5cd6e0, #b56bff);
     --aura: .13;           /* strength of the colored page glow */
     /* rgb channels so Tailwind opacity modifiers work */
-    --c-ink: 13 15 18; --c-panel: 21 24 29; --c-well: 10 12 15; --c-line: 38 43 51; --c-mute: 138 147 163;
-    --c-fg: 230 233 238; --c-ember: 255 122 61; --c-cyan: 92 214 224; --c-warn: 245 184 74; --c-ok: 87 209 140;
+    --c-ink: 22 21 20; --c-panel: 29 28 26; --c-well: 18 17 16; --c-line: 51 48 44; --c-mute: 149 143 135;
+    --c-fg: 236 232 226; --c-ember: 255 106 43; --c-cyan: 143 184 196; --c-warn: 226 166 62; --c-ok: 108 192 143;
     --c-pink: 255 95 162; --c-violet: 181 107 255; --c-gold: 245 184 61;
-    --font-display: "Bricolage Grotesque Variable", "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+    --font-display: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
     --font-body: "Instrument Sans", "Helvetica Neue", Arial, sans-serif;
     --font-mono: "Martian Mono", "SFMono-Regular", Menlo, Consolas, monospace;
     color-scheme: dark;
@@ -60,21 +63,17 @@
   html { background-color: var(--ink); color: var(--fg); }
   body { background-color: transparent; color: var(--fg); }
   /* Soft colored light behind every page: ember top-left, violet top-right, cyan at the bottom. Static, so it costs nothing. */
-  html { background-image:
-      radial-gradient(56rem 36rem at -8% -12%, rgb(255 122 61 / var(--aura)), transparent 62%),
-      radial-gradient(48rem 34rem at 108% 6%, rgb(181 107 255 / var(--aura)), transparent 62%),
-      radial-gradient(60rem 36rem at 50% 118%, rgb(92 214 224 / calc(var(--aura) * .8)), transparent 62%);
-    background-attachment: fixed; }
+  /* (no decorative page glow) */
   body { font-family: var(--font-body); font-size: 14px; line-height: 1.5; }
   body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 60; background: var(--ink); }
   .gutter { padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
-  .font-display { font-family: var(--font-display); text-wrap: balance; }
+  .font-display { font-family: var(--font-display); font-weight: 600 !important; letter-spacing: -.02em; text-wrap: balance; }
   .font-mono { font-family: var(--font-mono); }
-  .label { font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--mute); font-weight: 600; }
+  .label { font-size: 12.5px; color: var(--mute); font-weight: 500; }
   .tabular { font-variant-numeric: tabular-nums; }
   textarea.editor { tab-size: 2; caret-color: var(--ember); }
   textarea.editor::selection { background: var(--ember-soft); }
-  :focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  :focus-visible { outline: 2px solid var(--ember); outline-offset: 2px; }
   input[type=range] { -webkit-appearance: none; appearance: none; height: 6px; border-radius: 999px; background: linear-gradient(to right, var(--ember) var(--pct,0%), var(--line) var(--pct,0%)); }
   input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 22px; height: 22px; border-radius: 50%; background: var(--fg); border: 4px solid var(--ember); cursor: grab; }
   input[type=range]::-moz-range-thumb { width: 16px; height: 16px; border-radius: 50%; background: var(--fg); border: 4px solid var(--ember); cursor: grab; }
@@ -172,10 +171,10 @@
   }
   /* Light theme: same roles, daylight values */
   :root[data-ash="light"] {
-    --ink: #f4f5f7; --panel: #ffffff; --well: #eceef2; --line: #dadfe6; --mute: #5d6674; --fg: #14171c;
-    --ember: #e2561a; --ember-soft: rgba(226,86,26,.10); --cyan: #0b8794; --warn: #a96a0f; --ok: #16894d;
-    --c-ink: 244 245 247; --c-panel: 255 255 255; --c-well: 236 238 242; --c-line: 218 223 230; --c-mute: 93 102 116;
-    --c-fg: 20 23 28; --c-ember: 226 86 26; --c-cyan: 11 135 148; --c-warn: 169 106 15; --c-ok: 22 137 77;
+    --ink: #f5f4f1; --panel: #ffffff; --raised: #ecebe7; --well: #efeeea; --line: #dedbd5; --mute: #6b665f; --fg: #1b1a18;
+    --ember: #cf4a10; --ember-soft: rgba(207,74,16,.09); --cyan: #3d6f7d; --warn: #9a6408; --ok: #2d7a50;
+    --c-ink: 245 244 241; --c-panel: 255 255 255; --c-well: 239 238 234; --c-line: 222 219 213; --c-mute: 107 102 95;
+    --c-fg: 27 26 24; --c-ember: 207 74 16; --c-cyan: 61 111 125; --c-warn: 154 100 8; --c-ok: 45 122 80;
     --pink: #d6337a; --violet: #8a3fe0; --gold: #b07a10; --c-pink: 214 51 122; --c-violet: 138 63 224; --c-gold: 176 122 16;
     --aura: .09;
     --tint: 62%;
@@ -215,6 +214,39 @@
 /* A thin colored bar along the top of a panel. */
 .tone-top { position: relative; overflow: hidden; }
 .tone-top::before { content: ""; position: absolute; inset: 0 0 auto; height: 2px; background: linear-gradient(90deg, var(--t1), var(--t2, var(--t1))); opacity: .85; }
+
+/* ---------- calm: decorative effects switched off, kept as quiet semantic hooks ---------- */
+.btn-primary { background: var(--fg); color: var(--ink); transition: opacity calc(.15s * var(--spd)); }
+.btn-primary:hover:not(:disabled) { opacity: .88; }
+/* Ember is for the actions that burn or seal something. */
+.btn-burn { background: var(--ember); color: #1a0d05; transition: filter calc(.15s * var(--spd)); }
+.btn-burn:hover:not(:disabled) { filter: brightness(1.08); }
+:root[data-ash="light"] .btn-burn { color: #fff; }
+.fill-on { background: var(--fg); }
+.on-fill { color: var(--ink) !important; }
+[role="switch"].fill-on { background: var(--ember); }
+.grad-cool-bg { background: var(--fg); }
+.head-glow::after, .blob, .logo-glow, .logo-spark, .ash { display: none !important; }
+.ember-glow { box-shadow: none; animation: none; }
+.lift:hover { transform: none; box-shadow: none; }
+.stagger > * { animation: none; }
+.tone-card { background: var(--panel); border-color: var(--line); }
+.tone-card:hover { border-color: rgb(var(--c-fg) / .35); box-shadow: none; }
+.tone-top::before { display: none; }
+.tone-icon { background: var(--raised); color: var(--fg); box-shadow: none; border: 1px solid var(--line); }
+.tone-chip { color: var(--fg); background: var(--raised); border-color: var(--line); }
+.tone-text { color: var(--fg); }
+.tone-opt[aria-checked="true"] { border-color: rgb(var(--c-fg) / .55); background: var(--raised); box-shadow: none; }
+.tone-opt:hover { border-color: rgb(var(--c-fg) / .3); }
+[aria-checked="true"] > .tone-dot { border-color: var(--ember); background: var(--ember); box-shadow: inset 0 0 0 2px var(--raised); transform: none; }
+.flicker, .shimmer, .pulse-dot, .live-dot::after, .why-shackle, .why-flame, .why-check, .why-strike, .why-knob, .why-ping,
+.trail-chip, .burn-loop, .flame-outer, .flame-mid, .flame-core { animation: none !important; }
+.wire .pk, .keytrack .pk { animation: none !important; display: none; }
+.step-fwd, .step-back { animation-duration: calc(.24s * var(--spd)); }
+@keyframes step-fwd { from { transform: translateX(10px); opacity: 0 } to { transform: none; opacity: 1 } }
+@keyframes step-back { from { transform: translateX(-10px); opacity: 0 } to { transform: none; opacity: 1 } }
+.text-gold { color: var(--mute); }
+.scrim { background: rgba(10, 9, 8, .7); backdrop-filter: none; }
 
 /* ---------- logo flame ---------- */
 .flame-outer, .flame-mid, .flame-core, .logo-spark { transform-box: fill-box; transform-origin: 50% 100%; }

@@ -53,6 +53,7 @@ export default {
         console.error(err);
         res = json({ error: 'server_error' }, 500);
       }
+      if (res.status === 101 || res.webSocket) return res; // a live inbox connection: hand it over untouched
       res = new Response(res.body, res);
       res.headers.set('Cache-Control', 'no-store');
     } else {
@@ -62,7 +63,7 @@ export default {
       if (url.pathname.startsWith('/p/')) res.headers.set('Cache-Control', 'no-store');
       if (url.pathname === '/build.json') res.headers.set('Cache-Control', 'no-cache');
       // Secret links and the code page are never meant for search engines (robots.txt says so too).
-      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
     return res;
@@ -90,6 +91,8 @@ async function handleApi(request, env, url, ctx) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'p', id?, action?]
   if (parts[1] === 'admin') return handleAdmin(request, env, parts);
   if (parts[1] === 'owner' && parts.length === 2 && request.method === 'POST') return checkOwner(request, env);
+  if (parts[1] === 'inbox') return handleInbox(request, env, url, parts);
+  if (parts[1] === 'pair' && parts.length === 2 && request.method === 'POST') return pairDevices(request, env);
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
 
@@ -263,6 +266,48 @@ async function dailyQuota(request, env) {
     refund: (bytes) => post(name, { path: 'quota', bytes, refund: true, deleteAt }).catch(() => {}),
   };
 }
+
+/* ---------- devices: pairing and inboxes ----------
+   Every browser that uses device sending has an inbox (a random 16-byte id) and a secret token to read it.
+   Paired devices know each other's inbox id and public key, and drop end-to-end encrypted messages
+   ("open link X with key Y") there. The server sees only which inbox got a message, never what it says. */
+const INBOX_RE = /^[A-Za-z0-9_-]{22}$/;
+const MSG_MAX = 4000;
+
+async function handleInbox(request, env, url, parts) {
+  const action = parts[2];
+  if (action === 'ws') {
+    const inboxId = url.searchParams.get('inbox') || '';
+    if (!INBOX_RE.test(inboxId)) return json({ error: 'bad_inbox' }, 400);
+    if (request.headers.get('Upgrade') !== 'websocket') return json({ error: 'expected_websocket' }, 426);
+    return inboxStub(env, inboxId).fetch(new Request('https://link/inbox-ws', request));
+  }
+  if (request.method !== 'POST' || !['register', 'drop', 'list', 'ack'].includes(action)) return json({ error: 'not_found' }, 404);
+  const b = await request.json().catch(() => ({}));
+  if (!INBOX_RE.test(b.inboxId || '')) return json({ error: 'bad_inbox' }, 400);
+  if (action === 'drop') {
+    if (!(await allowed(env.CREATE_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+    if (typeof b.msg !== 'string' || !b.msg || b.msg.length > MSG_MAX || !B64URL_RE.test(b.msg)) return json({ error: 'bad_message' }, 400);
+    const expiresAt = Number.isSafeInteger(b.expiresAt) ? b.expiresAt : undefined;
+    return post(inboxStub(env, b.inboxId), 'inbox-drop', { msg: b.msg, expiresAt });
+  }
+  if (!isB64(b.token, 43)) return json({ error: 'bad_token' }, 400);
+  if (action === 'register' && !(await allowed(env.CODE_LIMITER || env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  return post(inboxStub(env, b.inboxId), 'inbox-' + action, { token: b.token, ids: b.ids });
+}
+
+// POST /api/pair   { lookup, role: 'a' | 'b', card? }   (lookup and card come from the pairing words; see lib/devices.js)
+async function pairDevices(request, env) {
+  if (!(await allowed(env.CODE_LIMITER || env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  const b = await request.json().catch(() => ({}));
+  if (!isB64(b.lookup, 43) || !['a', 'b'].includes(b.role)) return json({ error: 'bad_pair' }, 400);
+  if (b.card !== undefined && (typeof b.card !== 'string' || b.card.length > MSG_MAX || !B64URL_RE.test(b.card))) return json({ error: 'bad_card' }, 400);
+  if (b.role === 'b' && !b.card) return json({ error: 'bad_card' }, 400);
+  return post(env.LINKS.get(env.LINKS.idFromName('pair:' + (await sha256b64(b.lookup)))), 'pair', { role: b.role, card: b.card });
+}
+
+const inboxStub = (env, inboxId) => env.LINKS.get(env.LINKS.idFromName('inbox:' + inboxId));
+const post = (stub, path, body) => stub.fetch('https://link/' + path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 // POST /api/owner   header x-ashdrop-owner-key: <OWNER_KEY>
 // Lets the Settings page confirm an owner key before saving it. Answers 404 to everyone else.

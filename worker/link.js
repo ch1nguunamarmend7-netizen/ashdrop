@@ -4,6 +4,11 @@
 
 const TOMBSTONE_MS = 7 * 24 * 3600e3; // keep "burned/revoked/expired" status for the sender's My links view
 const blobKey = (id) => `p/${id}`;
+const PAIR_TTL = 10 * 60e3;                  // a pairing must be completed within 10 minutes
+const INBOX_MAX = 50;                         // waiting messages per device
+const INBOX_MSG_MS = 7 * 24 * 3600e3;         // a message never waits longer than 7 days
+const INBOX_IDLE_MS = 90 * 24 * 3600e3;       // an inbox nobody checks for 90 days is deleted
+const pub = (m) => ({ id: m.id, msg: m.msg, at: m.at });
 
 export class LinkDO {
   constructor(state, env) {
@@ -13,6 +18,8 @@ export class LinkDO {
 
   async fetch(request) {
     const url = new URL(request.url);
+    // A device listening for its inbox. Hibernatable: idle sockets cost nothing and survive restarts.
+    if (url.pathname === '/inbox-ws') return this.inboxSocket(request);
     const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
     // Run each request to completion before the next one starts. Without this, two opens could
     // interleave while one awaits hashing, and a burn link could be read twice.
@@ -32,6 +39,12 @@ export class LinkDO {
       case '/code-get': return this.codeGet();
       case '/code-drop': return this.codeDrop();
       // Daily upload quota per network (see quota() in index.js). Two kinds of tiny short-lived records.
+      // Device inboxes: paired devices drop encrypted messages ("open this link") for each other.
+      case '/inbox-register': return this.inboxRegister(body);
+      case '/inbox-drop': return this.inboxDrop(body);
+      case '/inbox-list': return this.inboxList(body);
+      case '/inbox-ack': return this.inboxAck(body);
+      case '/pair': return this.pair(body);
       case '/salt': return this.salt(body);
       case '/quota': return this.quota(body);
       default: return json({ error: 'not_found' }, 404);
@@ -206,6 +219,109 @@ export class LinkDO {
     return json({ ok: true, used: q.used });
   }
 
+  /* ---------- pairing: two devices swap encrypted name cards through a short-lived slot ---------- */
+  async pair(b) {
+    const p = await this.state.storage.get('pair');
+    if (b.role === 'a') {
+      if (!p) {
+        if (!b.card) return json({ error: 'not_found' }, 404);
+        await this.state.storage.put('pair', { a: b.card, b: null, deleteAt: Date.now() + PAIR_TTL });
+        await this.state.storage.setAlarm(Date.now() + PAIR_TTL);
+        return json({ other: null });
+      }
+      if (b.card && p.a !== b.card) return json({ error: 'exists' }, 409);
+      return json({ other: p.b });
+    }
+    if (!p || Date.now() >= p.deleteAt) return json({ error: 'not_found' }, 404);
+    if (p.b && p.b !== b.card) return json({ error: 'taken' }, 409); // only one device can join a pairing
+    p.b = b.card;
+    await this.state.storage.put('pair', p);
+    return json({ other: p.a });
+  }
+
+  /* ---------- inbox ---------- */
+  async inboxRegister(b) {
+    const inbox = await this.state.storage.get('inbox');
+    const tokenHash = await sha256b64(b.token);
+    if (inbox && !safeEqual(tokenHash, inbox.tokenHash)) return json({ error: 'taken' }, 409);
+    const rec = { tokenHash, deleteAt: Date.now() + INBOX_IDLE_MS };
+    await this.state.storage.put('inbox', rec);
+    await this.scheduleInbox();
+    return json({ ok: true });
+  }
+
+  async authed(b) {
+    const inbox = await this.state.storage.get('inbox');
+    return inbox && typeof b.token === 'string' && safeEqual(await sha256b64(b.token), inbox.tokenHash) ? inbox : null;
+  }
+
+  async messages() {
+    const all = await this.state.storage.list({ prefix: 'm:' });
+    const now = Date.now(), live = [], dead = [];
+    for (const [k, m] of all) (m.expiresAt > now ? live : dead).push(k === m.key ? m : { ...m, key: k });
+    if (dead.length) await this.state.storage.delete(dead.map((m) => m.key));
+    return live.sort((x, y) => x.at - y.at);
+  }
+
+  async inboxDrop(b) {
+    if (!(await this.state.storage.get('inbox'))) return json({ error: 'not_found' }, 404);
+    const live = await this.messages();
+    if (live.length >= INBOX_MAX) return json({ error: 'inbox_full' }, 429);
+    const at = Date.now();
+    const m = { key: '', id: bytesToB64url(crypto.getRandomValues(new Uint8Array(9))), msg: b.msg, at, expiresAt: Math.min(b.expiresAt || at + INBOX_MSG_MS, at + INBOX_MSG_MS) };
+    m.key = 'm:' + m.id;
+    await this.state.storage.put(m.key, m);
+    await this.scheduleInbox();
+    // Push it to every signed-in listener right away.
+    for (const ws of this.state.getWebSockets?.() || []) {
+      if (ws.deserializeAttachment?.()?.authed) { try { ws.send(JSON.stringify({ type: 'msg', message: pub(m) })); } catch {} }
+    }
+    return json({ ok: true }, 202);
+  }
+
+  async inboxList(b) {
+    const inbox = await this.authed(b);
+    if (!inbox) return json({ error: 'forbidden' }, 403);
+    inbox.deleteAt = Date.now() + INBOX_IDLE_MS; // an inbox that is used stays alive
+    await this.state.storage.put('inbox', inbox);
+    return json({ messages: (await this.messages()).map(pub) });
+  }
+
+  async inboxAck(b) {
+    if (!(await this.authed(b))) return json({ error: 'forbidden' }, 403);
+    const ids = Array.isArray(b.ids) ? b.ids.filter((x) => typeof x === 'string').slice(0, INBOX_MAX) : [];
+    if (ids.length) await this.state.storage.delete(ids.map((id) => 'm:' + id));
+    return json({ ok: true });
+  }
+
+  async scheduleInbox() {
+    const inbox = await this.state.storage.get('inbox');
+    if (!inbox) return;
+    const next = Math.min(inbox.deleteAt, ...(await this.messages()).map((m) => m.expiresAt));
+    await this.state.storage.setAlarm(next);
+  }
+
+  // WebSocket: the client connects, then sends { type: 'auth', token } as its first message.
+  async inboxSocket(request) {
+    if (request.headers.get('Upgrade') !== 'websocket' || typeof WebSocketPair !== 'function') return new Response('Expected a WebSocket', { status: 426 });
+    if ((this.state.getWebSockets?.() || []).length >= 20) return new Response('Too many listeners', { status: 429 });
+    const [client, server] = Object.values(new WebSocketPair());
+    this.state.acceptWebSocket(server);
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  async webSocketMessage(ws, data) {
+    let m;
+    try { m = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)); } catch { return ws.close(1003, 'bad message'); }
+    if (m.type === 'auth') {
+      if (await this.authed({ token: m.token })) { ws.serializeAttachment({ authed: true }); ws.send(JSON.stringify({ type: 'ready' })); }
+      else ws.close(1008, 'unauthorized');
+    } else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
+  }
+
+  async webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code, 'bye'); } catch {} }
+  async webSocketError(ws) { try { ws.close(1011, 'error'); } catch {} }
+
   async isOwner(rec, token) {
     if (typeof token !== 'string' || !token) return false;
     return safeEqual(await sha256b64(token), rec.ownerHash);
@@ -216,7 +332,14 @@ export class LinkDO {
   }
 
   async runAlarm() {
-    const tmp = (await this.state.storage.get('salt')) || (await this.state.storage.get('quota'));
+    if (await this.state.storage.get('inbox')) {
+      const inbox = await this.state.storage.get('inbox');
+      if (Date.now() >= inbox.deleteAt) { await this.state.storage.deleteAll(); return; }
+      await this.messages(); // drops expired ones
+      await this.scheduleInbox();
+      return;
+    }
+    const tmp = (await this.state.storage.get('salt')) || (await this.state.storage.get('quota')) || (await this.state.storage.get('pair'));
     if (tmp) {
       if (Date.now() >= tmp.deleteAt) await this.state.storage.deleteAll();
       else await this.state.storage.setAlarm(tmp.deleteAt);

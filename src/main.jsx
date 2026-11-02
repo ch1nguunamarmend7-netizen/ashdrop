@@ -1,13 +1,12 @@
 import React from 'react';
 import { createRoot } from 'react-dom/client';
-import '@fontsource-variable/bricolage-grotesque';
 import '@fontsource/instrument-sans/400.css';
 import '@fontsource/instrument-sans/500.css';
 import '@fontsource/instrument-sans/600.css';
 import '@fontsource/martian-mono/400.css';
 import '@fontsource/martian-mono/500.css';
 import './styles.css';
-import App, { RecipientPage, CodePage } from './App.jsx';
+import App, { RecipientPage, CodePage, PairPage } from './App.jsx';
 import { LegalPage } from './Legal.jsx';
 
 // Apply the saved theme before first paint so the recipient page matches too.
@@ -30,6 +29,11 @@ if (legal) {
   root.render(<LegalPage page={legal[1]} />);
 } else if (/^\/code\/?$/.test(location.pathname)) {
   root.render(<CodePage />);
+} else if (/^\/pair\/?$/.test(location.pathname)) {
+  // The pairing words may arrive in the fragment (from the QR code). Take them out of the address bar.
+  const words = decodeURIComponent(location.hash.slice(1));
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  root.render(<PairPage initialWords={words} />);
 } else if (match) {
   // Read the key from the fragment, then remove it from the address bar and history,
   // so it is not left behind in the browser's history or a screenshot of the URL bar.

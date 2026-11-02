@@ -3,4 +3,5 @@ User-agent: *
 Disallow: /p/
 Disallow: /api/
 Disallow: /code
+Disallow: /pair
 Allow: /
