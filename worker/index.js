@@ -66,6 +66,8 @@ export default {
       if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
+    // Some browsers (Safari) do not count wss:// to the same host as 'self', so name it for live connections.
+    res.headers.set('Content-Security-Policy', CSP.replace("connect-src 'self'", `connect-src 'self' ${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`));
     return res;
   },
 };
@@ -92,6 +94,7 @@ async function handleApi(request, env, url, ctx) {
   if (parts[1] === 'admin') return handleAdmin(request, env, parts);
   if (parts[1] === 'owner' && parts.length === 2 && request.method === 'POST') return checkOwner(request, env);
   if (parts[1] === 'inbox') return handleInbox(request, env, url, parts);
+  if (parts[1] === 'nearby' && parts[2] === 'ws') return nearbyRoom(request, env);
   if (parts[1] === 'pair' && parts.length === 2 && request.method === 'POST') return pairDevices(request, env);
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
@@ -248,18 +251,44 @@ async function openLink(request, env, id, call, ctx) {
 // Daily upload quota per network. The address is never stored: it is hashed together with a random value
 // that exists for one day only (kept in its own Durable Object and then deleted), so yesterday's counters
 // cannot be linked back to anyone. Counters themselves are deleted a day later.
-async function dailyQuota(request, env) {
-  const ip = request.headers.get('cf-connecting-ip') || 'unknown';
+// A scrambled name for "this network today". The address is mixed with a random value that only exists
+// for one day, so it cannot be turned back into the address. `group` lets IPv6 devices on the same
+// network (same /64 prefix) land in the same Nearby room.
+async function networkTag(request, env, { group = false } = {}) {
+  let ip = request.headers.get('cf-connecting-ip') || 'unknown';
+  if (group && ip.includes(':')) ip = expandV6(ip).slice(0, 4).join(':') + '::/64';
   const now = Date.now();
   const day = new Date(now).toISOString().slice(0, 10);
   const resetAt = Date.parse(day + 'T00:00:00Z') + 864e5;
   const deleteAt = resetAt + 3600e3;
+  const r = await env.LINKS.get(env.LINKS.idFromName(`salt:${day}`)).fetch('https://link/salt', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ deleteAt }),
+  });
+  const { value: salt } = await r.json();
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${ip}`));
+  return { day, resetAt, deleteAt, tag: bytesToB64url(new Uint8Array(digest)) };
+}
+
+function expandV6(ip) {
+  const [head, tail = ''] = ip.split('::');
+  const h = head ? head.split(':') : [], t = tail ? tail.split(':') : [];
+  return [...h, ...Array(Math.max(0, 8 - h.length - t.length)).fill('0'), ...t].map((x) => x.toLowerCase().replace(/^0+(?=.)/, ''));
+}
+
+// GET /api/nearby/ws (WebSocket): join the Nearby room for your network.
+async function nearbyRoom(request, env) {
+  if (request.headers.get('Upgrade') !== 'websocket') return json({ error: 'expected_websocket' }, 426);
+  if (!(await allowed(env.CODE_LIMITER || env.OPEN_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
+  const { day, tag } = await networkTag(request, env, { group: true });
+  return env.LINKS.get(env.LINKS.idFromName(`nearby:${day}:${tag}`)).fetch(new Request('https://link/nearby-ws', request));
+}
+
+async function dailyQuota(request, env) {
+  const { day, resetAt, deleteAt, tag } = await networkTag(request, env);
   const post = (name, body) => env.LINKS.get(env.LINKS.idFromName(name)).fetch('https://link/' + body.path, {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   }).then((r) => r.json());
-  const { value: salt } = await post(`salt:${day}`, { path: 'salt', deleteAt });
-  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(`${salt}|${ip}`));
-  const name = `quota:${day}:${bytesToB64url(new Uint8Array(digest))}`;
+  const name = `quota:${day}:${tag}`;
   return {
     resetAt,
     take: async (bytes) => (await post(name, { path: 'quota', bytes, limit: DAILY_QUOTA, deleteAt })).ok,

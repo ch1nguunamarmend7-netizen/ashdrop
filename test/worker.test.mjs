@@ -409,3 +409,70 @@ test('inbox: a live socket must authenticate, then gets messages pushed instantl
     assert.equal(plain.status, 426, 'needs an Upgrade header');
   } finally { delete globalThis.WebSocketPair; globalThis.Response = RealResponse; }
 });
+
+// ---------- Nearby rooms ----------
+function fakeSockets() {
+  class FakeSocket { constructor() { this.sent = []; this.closed = null; this.att = null; }
+    send(d) { this.sent.push(JSON.parse(d)); } close(code) { this.closed = code; }
+    serializeAttachment(a) { this.att = structuredClone(a); } deserializeAttachment() { return this.att; }
+    last(type) { return [...this.sent].reverse().find((m) => m.type === type); } }
+  const made = [];
+  globalThis.WebSocketPair = function () { const c = new FakeSocket(), s = new FakeSocket(); made.push(s); return { 0: c, 1: s }; };
+  const RealResponse = globalThis.Response;
+  globalThis.Response = class extends RealResponse { constructor(body, init = {}) { if (init.status === 101) { super(null, { status: 200 }); this.webSocket = init.webSocket; Object.defineProperty(this, 'status', { value: 101 }); } else super(body, init); } };
+  return { made, restore: () => { delete globalThis.WebSocketPair; globalThis.Response = RealResponse; } };
+}
+const joinNearby = (env, ip) => call(env, '/api/nearby/ws', { headers: { upgrade: 'websocket', 'cf-connecting-ip': ip } });
+const roomOf = (env) => [...env._objects.entries()].filter(([k]) => k.startsWith('nearby:'));
+
+test('nearby: same network shares a room, other networks do not; addresses are not in room names', async () => {
+  const env = makeEnv();
+  const fx = fakeSockets();
+  try {
+    assert.equal((await joinNearby(env, '203.0.113.10')).status, 101);
+    assert.equal((await joinNearby(env, '203.0.113.10')).status, 101);
+    assert.equal((await joinNearby(env, '198.51.100.20')).status, 101);
+    // IPv6 devices on the same /64 network share a room
+    await joinNearby(env, '2001:db8:abcd:12:1111::1');
+    await joinNearby(env, '2001:db8:abcd:12:ffff:2::9');
+    const rooms = roomOf(env).map(([k]) => k);
+    assert.equal(rooms.length, 3, rooms.join(', '));
+    for (const k of rooms) assert.ok(!/203\.0|198\.51|2001/.test(k), k);
+    assert.equal((await call(env, '/api/nearby/ws', { headers: { 'cf-connecting-ip': '1.2.3.4' } })).status, 426);
+  } finally { fx.restore(); }
+});
+
+test('nearby: only visible devices are listed; signals reach only the named device', async () => {
+  const env = makeEnv();
+  const fx = fakeSockets();
+  try {
+    for (let i = 0; i < 3; i++) await joinNearby(env, '203.0.113.10');
+    const [a, b, c] = fx.made;
+    const room = roomOf(env)[0][1];
+    const say = (ws, m) => room.webSocketMessage(ws, JSON.stringify(m));
+    const idOf = (ws) => ws.last('welcome').id;
+    await say(a, { type: 'hello', name: 'Amber Otter', device: 'iPhone', visible: true });
+    await say(b, { type: 'hello', name: 'Blue Fox', device: 'Windows PC', visible: true });
+    await say(c, { type: 'hello', name: 'Hidden Owl', device: 'Mac', visible: false });
+    assert.deepEqual(a.last('peers').peers.map((p) => p.name), ['Blue Fox']);
+    assert.deepEqual(c.last('peers').peers.map((p) => p.name).sort(), ['Amber Otter', 'Blue Fox'], 'a hidden device can still see visible ones');
+    assert.ok(!b.last('peers').peers.some((p) => p.name === 'Hidden Owl'), 'hidden devices are not listed');
+    await say(a, { type: 'signal', to: idOf(b), data: { sdp: 'offer' } });
+    assert.deepEqual(b.last('signal'), { type: 'signal', from: idOf(a), name: 'Amber Otter', device: 'iPhone', data: { sdp: 'offer' } });
+    assert.equal(c.last('signal'), undefined, 'nobody else gets it');
+    await say(a, { type: 'hello', name: '<script>x</script>'.repeat(5), visible: true });
+    assert.ok(!/[<>]/.test(b.last('peers').peers[0].name), 'names are cleaned');
+    // leaving updates everyone's list
+    b.closed = 1000; await room.webSocketClose(b, 1000);
+    assert.deepEqual(a.last('peers').peers.map((p) => p.name), []);
+    // flood control
+    for (let i = 0; i < 205; i++) await say(c, { type: 'ping' });
+    assert.equal(c.closed, 1008);
+  } finally { fx.restore(); }
+});
+
+test('CSP allows live connections to the same host only', async () => {
+  const env = makeEnv();
+  const csp = (await call(env, '/')).headers.get('content-security-policy');
+  assert.match(csp, /connect-src 'self' wss:\/\/ashdrop\.test(;|$)/);
+});

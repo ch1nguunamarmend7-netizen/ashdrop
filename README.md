@@ -31,6 +31,8 @@ wrangler.toml           Cloudflare config (R2 bucket, Durable Object, static ass
 
 - **Burn links and timed links** (1 view, 1 hour, 24 hours), text or several files up to 25 MB in total.
 - **Typeable codes**: 4 words that open a link on a device that cannot scan the QR code.
+- **Nearby**: send files and text straight to devices on the same Wi-Fi (WebRTC, device to device, no size limit), with Accept prompts and a matching check code.
+- **Your devices**: pair your phone and computer once, then send any link to the other with one tap.
 - **Owner key**: whoever runs the site can set an `OWNER_KEY` secret and paste it in Settings for links up to 95 MB that last up to 7 days.
 - **Password + lockout.** The password derives two keys: one encrypts, the other proves knowledge
   to the server. The server stores only a SHA-256 of that proof and releases nothing until it

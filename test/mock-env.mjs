@@ -21,8 +21,9 @@ export function makeEnv() {
       storage: storage(),
       blockConcurrencyWhile(fn) { const run = chain.then(fn); chain = run.catch(() => {}); return run; },
       // Durable Object WebSocket hibernation API, enough for tests.
-      acceptWebSocket(ws) { sockets.push(ws); },
+      acceptWebSocket(ws) { ws._do = this._obj; sockets.push(ws); },
       getWebSockets() { return sockets.filter((w) => !w.closed); },
+      sockets,
     };
   }
   function storage() {
@@ -40,7 +41,7 @@ export function makeEnv() {
   env.LINKS = {
     idFromName: (n) => n,
     get(id) {
-      if (!objects.has(id)) objects.set(id, new LinkDO(state(), env));
+      if (!objects.has(id)) { const st = state(); const obj = new LinkDO(st, env); st._obj = obj; objects.set(id, obj); }
       const obj = objects.get(id);
       return { fetch: (url, init) => obj.fetch(new Request(url, init)) };
     },

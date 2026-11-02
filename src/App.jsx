@@ -7,6 +7,7 @@ import { createLink, getMeta, openLink, revokeLink, linkStatus, lookupCode } fro
 import { generateCode, parseCode, sealCode, openCode, CODE_WORDS } from './lib/code.js';
 import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL, OWNER_MAX_TOTAL } from './lib/bundle.js';
 import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
+import { joinNearby, nearbyIdentity, deviceType } from './lib/nearby.js';
 import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
@@ -582,6 +583,219 @@ export function PairPage({ initialWords = '' }) {
       </main>
       <Footer className="gutter pb-8 pt-2" />
     </div>
+  );
+}
+
+/* ---------- Nearby: device to device on the same network ---------- */
+const PHONE_ICON = <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="6" y="2.5" width="12" height="19" rx="2.5"/><path d="M11 18.5h2"/></svg>;
+const COMPUTER_ICON = <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="1.5"/><path d="M8 20h8M12 16v4"/></svg>;
+const isPhone = (d) => /iPhone|Android|iPad/.test(d || '');
+const nearbyVisiblePref = () => { try { return localStorage.getItem('ashdrop.nearbyVisible') !== 'off'; } catch { return true; } };
+
+function NearbyView() {
+  const [status, setStatus] = useState('connecting');
+  const [peers, setPeers] = useState([]);
+  const [visible, setVisible] = useState(nearbyVisiblePref);
+  const [me, setMe] = useState(nearbyIdentity);
+  const [renaming, setRenaming] = useState(false);
+  const [jobs, setJobs] = useState({});       // peerId -> { state, progress, code, msg, cancel }
+  const [incoming, setIncoming] = useState([]); // queue of requests
+  const [textFor, setTextFor] = useState(null);
+  const [pickFor, setPickFor] = useState(null);
+  const conn = useRef(null);
+  const fileInput = useRef(null);
+
+  useEffect(() => {
+    conn.current = joinNearby({
+      visible, onStatus: setStatus, onPeers: setPeers,
+      onIncoming: (req) => setIncoming(q => [...q, req]),
+    });
+    return () => conn.current?.close();
+  }, []);
+
+  const toggleVisible = (v) => { setVisible(v); conn.current?.setVisible(v); try { localStorage.setItem('ashdrop.nearbyVisible', v ? 'on' : 'off'); } catch {} };
+  const job = (id, patch) => setJobs(j => ({ ...j, [id]: { ...j[id], ...patch } }));
+  const sendTo = (peer, payload) => {
+    if (!payload.files?.length && !payload.text) return;
+    const cancel = conn.current.send(peer, payload, {
+      onState: (state, extra) => job(peer.id, { state, ...(state === 'waiting' ? { code: extra?.code } : {}), ...(state === 'failed' ? { msg: extra } : {}), ...(state === 'sent' ? { progress: 1 } : {}) }),
+      onProgress: (p) => job(peer.id, { progress: p }),
+    });
+    job(peer.id, { state: 'connecting', progress: 0, msg: '', code: '', what: payload.files?.length ? `${payload.files.length} file${payload.files.length > 1 ? 's' : ''}` : 'text', cancel });
+  };
+  const busy = (st) => ['connecting', 'waiting', 'sending'].includes(st);
+
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col gap-6">
+      <div>
+        <h1 className="font-display text-[28px] sm:text-[36px] leading-[1.1]">Nearby</h1>
+        <p className="text-mute text-[14px] mt-2 max-w-xl">Send files and text straight to devices on the same Wi-Fi. They go device to device, encrypted, and are never uploaded, so there is no size limit.</p>
+      </div>
+
+      <section className="rounded-2xl border border-line bg-panel p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4 justify-between">
+        <div className="flex items-center gap-3 min-w-0">
+          <span className="w-11 h-11 rounded-xl grid place-items-center border border-line bg-raised shrink-0">{isPhone(deviceType()) ? PHONE_ICON : COMPUTER_ICON}</span>
+          <div className="min-w-0">
+            {renaming ? (
+              <form onSubmit={(e) => { e.preventDefault(); setMe({ name: conn.current.rename(e.target.elements.nm.value) }); setRenaming(false); }} className="flex gap-2">
+                <input name="nm" defaultValue={me.name} autoFocus maxLength={32} aria-label="Your name on Nearby" className="bg-well border border-line rounded-lg px-2.5 py-1.5 text-[14px] outline-hidden focus:border-mute w-44" />
+                <button className="press rounded-lg px-3 text-[13px] font-semibold btn-primary">Save</button>
+              </form>
+            ) : (
+              <div className="text-[15px] font-semibold truncate">You appear as <span id="nearby-me">{me.name}</span> <button onClick={() => setRenaming(true)} className="ml-1 text-[12.5px] font-normal text-mute underline underline-offset-2 hover:text-fg">Rename</button></div>
+            )}
+            <div className="text-[12.5px] text-mute mt-0.5">{status === 'online' ? (visible ? 'Visible to devices on this network while this screen is open.' : 'Hidden. You can still send to visible devices.') : status === 'connecting' ? 'Connecting…' : 'Offline. Reconnecting…'}</div>
+          </div>
+        </div>
+        <label className="flex items-center gap-3 shrink-0 text-[13px]">
+          <span>Visible</span>
+          <Toggle id="nearby-visible" label="Visible to nearby devices" on={visible} onChange={toggleVisible} />
+        </label>
+      </section>
+
+      {peers.length === 0 ? (
+        <section id="nearby-empty" className="rounded-2xl border border-dashed border-line p-6 sm:p-8 flex flex-col sm:flex-row items-center gap-6">
+          <div className="flex-1 text-center sm:text-left">
+            <div className="text-[15px] font-semibold">Looking for devices on this network…</div>
+            <p className="text-[13px] text-mute mt-1.5">Open <span className="font-mono text-fg">{location.host}/nearby</span> on your other device. Both need to be on the same Wi-Fi and have this screen open.</p>
+          </div>
+          <div className="shrink-0 rounded-xl bg-white p-2"><QR text={`${location.origin}/nearby`} size={120} /></div>
+        </section>
+      ) : (
+        <section aria-label="Devices nearby">
+          <div className="text-[13px] text-mute mb-2.5">Tap a device to send it files, or drop files on it.</div>
+          <ul id="nearby-peers" className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+            {peers.map(p => {
+              const j = jobs[p.id] || {};
+              return (
+                <li key={p.id}>
+                  <div onDragOver={(e) => e.preventDefault()} onDrop={(e) => { e.preventDefault(); if (!busy(j.state)) sendTo(p, { files: [...e.dataTransfer.files] }); }}
+                    className="rounded-2xl border border-line bg-panel p-4 flex flex-col items-center text-center gap-2 h-full">
+                    <button data-peer={p.name} onClick={() => { if (!busy(j.state)) { setPickFor(p); fileInput.current.click(); } }} disabled={busy(j.state)}
+                      className="press flex flex-col items-center gap-2 w-full disabled:cursor-default">
+                      <span className="w-14 h-14 rounded-full grid place-items-center border border-line bg-raised">{isPhone(p.device) ? PHONE_ICON : COMPUTER_ICON}</span>
+                      <span className="text-[14px] font-semibold leading-tight">{p.name}</span>
+                      <span className="text-[12px] text-mute -mt-1">{p.device}</span>
+                    </button>
+                    <div className="min-h-[34px] w-full flex flex-col items-center justify-center text-[12px]" aria-live="polite">
+                      {j.state === 'connecting' && <span className="text-mute">Connecting…</span>}
+                      {j.state === 'waiting' && <span className="text-mute">Waiting for them to accept<br />Check code <span className="font-mono text-fg">{j.code}</span></span>}
+                      {j.state === 'sending' && <div className="w-full"><div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full bg-fg transition-[width]" style={{ width: `${Math.round((j.progress || 0) * 100)}%` }} /></div><div className="text-mute mt-1 tabular">{Math.round((j.progress || 0) * 100)}%</div></div>}
+                      {j.state === 'sent' && <span className="text-ok">Sent {j.what} ✓</span>}
+                      {j.state === 'declined' && <span className="text-warn">They declined</span>}
+                      {j.state === 'cancelled' && <span className="text-mute">Cancelled</span>}
+                      {j.state === 'failed' && <span className="text-warn">{j.msg}</span>}
+                      {!busy(j.state) && <button onClick={() => setTextFor(p)} className="text-mute underline underline-offset-2 hover:text-fg mt-0.5">Send text</button>}
+                      {busy(j.state) && <button onClick={() => j.cancel?.()} className="text-mute hover:text-ember mt-0.5">Cancel</button>}
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+      <input ref={fileInput} id="nearby-file" type="file" multiple className="hidden" onChange={(e) => { const fs = [...e.target.files]; e.target.value = ''; if (pickFor && fs.length) sendTo(pickFor, { files: fs }); }} />
+
+      <p className="text-[12px] text-mute">Only devices on the same network can see you, and only while this screen is open. Nothing is received until you tap Accept. Both screens show the same 4-digit check code; if they match, the connection is private end to end.</p>
+
+      {textFor && <SendTextModal peer={textFor} onClose={() => setTextFor(null)} onSend={(text) => { sendTo(textFor, { text }); setTextFor(null); }} />}
+      {incoming[0] && <IncomingModal key={incoming[0].from.id + incoming[0].code} req={incoming[0]} onClose={() => setIncoming(q => q.slice(1))} />}
+    </div>
+  );
+}
+
+function SendTextModal({ peer, onClose, onSend }) {
+  const [text, setText] = useState('');
+  return (
+    <Modal onClose={onClose} labelledBy="st-title">
+      <h2 id="st-title" className="font-display text-xl">Send text to {peer.name}</h2>
+      <label htmlFor="nearby-text" className="sr-only">Text</label>
+      <textarea id="nearby-text" autoFocus value={text} onChange={(e) => setText(e.target.value)} rows={6} maxLength={100000}
+        className="mt-3 w-full bg-well border border-line rounded-lg p-3 font-mono text-[13px] outline-hidden focus:border-mute" placeholder="A password, a link, a note…" />
+      <div className="flex gap-2 mt-3">
+        <button onClick={onClose} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold border border-line">Cancel</button>
+        <button id="nearby-text-send" disabled={!text.trim()} onClick={() => onSend(text)} className="press flex-1 rounded-lg py-2.5 text-[13px] font-semibold btn-primary disabled:opacity-50">Send</button>
+      </div>
+    </Modal>
+  );
+}
+
+function IncomingModal({ req, onClose }) {
+  const [phase, setPhase] = useState('ask'); // ask → receiving → done | error
+  const [progress, setProgress] = useState(0);
+  const [result, setResult] = useState(null);
+  const [msg, setMsg] = useState('');
+  const [copied, setCopied] = useState(false);
+  const accept = () => {
+    setPhase('receiving');
+    req.accept({ onProgress: setProgress, onDone: (r) => { setResult(r); setPhase('done'); }, onError: (m) => { setMsg(m); setPhase('error'); } });
+  };
+  const decline = () => { req.decline(); onClose(); };
+  const total = req.totalBytes;
+  const save = (name, blob) => browserDownloads.save({ filename: name, data: blob });
+  return (
+    <Modal onClose={phase === 'ask' ? decline : onClose} labelledBy="in-title">
+      <div className="flex items-start gap-3">
+        <span className="w-11 h-11 rounded-xl grid place-items-center border border-line bg-raised shrink-0">{isPhone(req.from.device) ? PHONE_ICON : COMPUTER_ICON}</span>
+        <div className="min-w-0">
+          <h2 id="in-title" className="font-display text-xl leading-tight">{req.from.name}</h2>
+          <div className="text-[12.5px] text-mute">{req.from.device ? `${req.from.device} on your network` : 'On your network'}</div>
+        </div>
+      </div>
+
+      {phase === 'ask' && (
+        <div id="incoming-ask">
+          <p className="text-[14px] mt-4">Wants to send you {req.files.length ? `${req.files.length} file${req.files.length > 1 ? 's' : ''} (${fmtBytes(total)})` : ''}{req.files.length && req.text ? ' and ' : ''}{req.text ? 'a text message' : ''}.</p>
+          {req.files.length > 0 && (
+            <ul className="mt-3 max-h-48 overflow-y-auto flex flex-col gap-1 text-[12.5px]">
+              {req.files.map((f, i) => <li key={i} className="flex justify-between gap-3 rounded-lg bg-well border border-line px-3 py-1.5"><span className="font-mono truncate">{f.name}</span><span className="text-mute tabular shrink-0">{fmtBytes(f.size)}</span></li>)}
+            </ul>
+          )}
+          <div className="mt-3 text-[12.5px] text-mute">Check code <span id="incoming-code" className="font-mono text-fg text-[14px]">{req.code}</span>. It should match the code on their screen.</div>
+          <div className="flex gap-2 mt-4">
+            <button id="incoming-decline" onClick={decline} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold border border-line hover:border-mute">Decline</button>
+            <button id="incoming-accept" onClick={accept} className="press flex-1 rounded-lg py-2.5 text-[13px] font-semibold btn-primary">Accept</button>
+          </div>
+        </div>
+      )}
+      {phase === 'receiving' && (
+        <div className="mt-5">
+          <div className="h-2 rounded-full bg-line overflow-hidden"><div className="h-full bg-fg transition-[width]" style={{ width: `${Math.round(progress * 100)}%` }} /></div>
+          <div className="text-[12.5px] text-mute mt-2 tabular">Receiving… {Math.round(progress * 100)}%</div>
+        </div>
+      )}
+      {phase === 'done' && result && (
+        <div id="incoming-done" className="mt-4 flex flex-col gap-3">
+          {result.text !== null && result.text !== undefined && (
+            <div>
+              <pre id="incoming-text" className="rounded-lg bg-well border border-line p-3 font-mono text-[12.5px] whitespace-pre-wrap break-words max-h-60 overflow-auto">{result.text}</pre>
+              <button onClick={async () => { try { await navigator.clipboard.writeText(result.text); setCopied(true); } catch {} }} className="press mt-2 w-full rounded-lg py-2.5 text-[13px] font-semibold btn-primary">{copied ? 'Copied' : 'Copy text'}</button>
+            </div>
+          )}
+          {result.files.length > 0 && (
+            <>
+              <ul className="flex flex-col gap-1.5 max-h-60 overflow-y-auto">
+                {result.files.map((f, i) => (
+                  <li key={i} className="flex items-center gap-3 rounded-lg bg-well border border-line px-3 py-2">
+                    <span className="font-mono text-[12.5px] truncate flex-1">{f.name}</span>
+                    <span className="text-mute text-[12px] tabular shrink-0">{fmtBytes(f.size)}</span>
+                    <button onClick={() => save(f.name, f.blob)} className="press shrink-0 rounded-md px-2.5 py-1 text-[12px] font-semibold border border-line hover:border-mute">Save</button>
+                  </li>
+                ))}
+              </ul>
+              {result.files.length > 1 && total < 300 * 1024 * 1024 && (
+                <button id="incoming-save-all" onClick={async () => save('nearby-files.zip', makeZip(await Promise.all(result.files.map(async f => ({ name: f.name, data: new Uint8Array(await f.blob.arrayBuffer()) })))))}
+                  className="press rounded-lg py-2.5 text-[13px] font-semibold btn-primary">Save all (.zip)</button>
+              )}
+              {result.files.length === 1 && <button onClick={() => save(result.files[0].name, result.files[0].blob)} className="press rounded-lg py-2.5 text-[13px] font-semibold btn-primary">Save file</button>}
+            </>
+          )}
+          <button onClick={onClose} className="text-[13px] text-mute hover:text-fg">Close</button>
+        </div>
+      )}
+      {phase === 'error' && <div role="alert" className="mt-4 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2.5">{msg}</div>}
+    </Modal>
   );
 }
 
@@ -2442,7 +2656,7 @@ function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0, t1 = 'var(
 }
 
 function App() {
-  const [view, setView] = useState('share');
+  const [view, setView] = useState(() => (/^\/nearby\/?$/.test(location.pathname) ? 'nearby' : 'share'));
   const [step, setStep] = useState('type'); // type → (format) → content → protect
   const [maxIdx, setMaxIdx] = useState(0);
   const [dir, setDir] = useState('fwd');
@@ -2654,7 +2868,7 @@ function App() {
     finally { setBusy(false); setProgress(null); }
   };
 
-  const NAV = [['share', 'Share'], ['vault', FEATURES.vaultFiles ? 'Vault' : 'My links']];
+  const NAV = [['share', 'Share'], ['nearby', 'Nearby'], ['vault', FEATURES.vaultFiles ? 'Vault' : 'My links']];
   const navIdx = NAV.findIndex(([id]) => id === view); // -1 on Settings
   const GEAR = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
   const headings = {
@@ -2677,9 +2891,9 @@ function App() {
           <button onClick={() => { setView('share'); }} aria-label="Ashdrop home"><Logo /></button>
           {ownerOn && <span id="owner-chip" title="Owner key active on this device: links up to 95 MB, 7-day expiry" style={{ '--t1': 'var(--gold)' }} className="tone-chip hidden sm:inline-flex border rounded-full px-2 py-0.5 text-[11px] font-semibold">Owner</span>}
           <nav className="mx-auto overflow-x-auto no-scrollbar min-w-0" aria-label="Sections">
-            <div className="relative grid grid-cols-2 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
+            <div className="relative grid grid-cols-3 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
               <span className="absolute top-1 bottom-1 left-1 rounded-lg fill-on transition-all duration-500" aria-hidden="true"
-                style={{ width: 'calc((100% - 12px) / 2)', transform: `translateX(calc(${Math.max(navIdx, 0)} * (100% + 4px))) scale(${navIdx < 0 ? 0.85 : 1})`, opacity: navIdx < 0 ? 0 : 1, transitionTimingFunction: 'var(--ease-out)' }} />
+                style={{ width: 'calc((100% - 16px) / 3)', transform: `translateX(calc(${Math.max(navIdx, 0)} * (100% + 4px))) scale(${navIdx < 0 ? 0.85 : 1})`, opacity: navIdx < 0 ? 0 : 1, transitionTimingFunction: 'var(--ease-out)' }} />
               {NAV.map(([id, label]) => (
                 <button key={id} id={`nav-${id}`} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
                   className={`relative z-10 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'on-fill font-semibold' : 'text-mute hover:text-fg'}`}>
@@ -2730,6 +2944,8 @@ function App() {
           <div key="how" className="fade-in py-2">
             <HowItWorks onShare={() => setView('share')} onVault={() => setView('vault')} />
           </div>
+        ) : view === 'nearby' ? (
+          <div key="nearby" className="fade-in"><NearbyView /></div>
         ) : view === 'vault' ? (
           <div key="vault" className="step-fwd">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">

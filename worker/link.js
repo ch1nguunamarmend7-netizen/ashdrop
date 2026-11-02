@@ -4,6 +4,7 @@
 
 const TOMBSTONE_MS = 7 * 24 * 3600e3; // keep "burned/revoked/expired" status for the sender's My links view
 const blobKey = (id) => `p/${id}`;
+const NEARBY_MAX = 50;                        // devices in one network's room
 const PAIR_TTL = 10 * 60e3;                  // a pairing must be completed within 10 minutes
 const INBOX_MAX = 50;                         // waiting messages per device
 const INBOX_MSG_MS = 7 * 24 * 3600e3;         // a message never waits longer than 7 days
@@ -20,6 +21,8 @@ export class LinkDO {
     const url = new URL(request.url);
     // A device listening for its inbox. Hibernatable: idle sockets cost nothing and survive restarts.
     if (url.pathname === '/inbox-ws') return this.inboxSocket(request);
+    // Nearby: a room for the devices on one network. It only introduces them; files go device to device.
+    if (url.pathname === '/nearby-ws') return this.nearbySocket(request);
     const body = request.method === 'POST' ? await request.json().catch(() => ({})) : {};
     // Run each request to completion before the next one starts. Without this, two opens could
     // interleave while one awaits hashing, and a burn link could be read twice.
@@ -313,13 +316,68 @@ export class LinkDO {
   async webSocketMessage(ws, data) {
     let m;
     try { m = JSON.parse(typeof data === 'string' ? data : new TextDecoder().decode(data)); } catch { return ws.close(1003, 'bad message'); }
+    const att = ws.deserializeAttachment?.();
+    if (att?.kind === 'nearby') return this.nearbyMessage(ws, att, m);
     if (m.type === 'auth') {
       if (await this.authed({ token: m.token })) { ws.serializeAttachment({ authed: true }); ws.send(JSON.stringify({ type: 'ready' })); }
       else ws.close(1008, 'unauthorized');
     } else if (m.type === 'ping') ws.send(JSON.stringify({ type: 'pong' }));
   }
 
-  async webSocketClose(ws, code) { try { ws.close(code === 1005 ? 1000 : code, 'bye'); } catch {} }
+  async webSocketClose(ws, code) {
+    try { ws.close(code === 1005 ? 1000 : code, 'bye'); } catch {}
+    if (ws.deserializeAttachment?.()?.kind === 'nearby') this.nearbyPeers(ws);
+  }
+
+  /* ---------- Nearby ----------
+     Each connection gets a random id for this session. A device that is visible announces a name and a
+     device type; everyone in the room gets the list of visible devices. The room also passes connection
+     offers ("signals") from one device to another, and nothing else. It never sees files: those travel
+     over an encrypted WebRTC connection straight between the two devices. */
+  async nearbySocket(request) {
+    if (request.headers.get('Upgrade') !== 'websocket' || typeof WebSocketPair !== 'function') return new Response('Expected a WebSocket', { status: 426 });
+    if (this.nearbyOpen().length >= NEARBY_MAX) return new Response('This network is full', { status: 429 });
+    const [client, server] = Object.values(new WebSocketPair());
+    this.state.acceptWebSocket(server);
+    const id = bytesToB64url(crypto.getRandomValues(new Uint8Array(9)));
+    server.serializeAttachment({ kind: 'nearby', id, name: '', device: '', visible: false, n: 0, t: Date.now() });
+    server.send(JSON.stringify({ type: 'welcome', id }));
+    return new Response(null, { status: 101, webSocket: client });
+  }
+
+  nearbyOpen(except) {
+    return (this.state.getWebSockets?.() || []).filter((w) => w !== except && w.deserializeAttachment?.()?.kind === 'nearby');
+  }
+
+  nearbyPeers(except) {
+    const all = this.nearbyOpen(except);
+    const visible = all.map((w) => w.deserializeAttachment()).filter((a) => a.visible && a.name);
+    for (const w of all) {
+      const me = w.deserializeAttachment().id;
+      try { w.send(JSON.stringify({ type: 'peers', peers: visible.filter((a) => a.id !== me).map((a) => ({ id: a.id, name: a.name, device: a.device })) })); } catch {}
+    }
+  }
+
+  nearbyMessage(ws, att, m) {
+    // A little flood control: at most 200 messages per minute per connection.
+    const now = Date.now();
+    if (now - att.t > 60e3) { att.t = now; att.n = 0; }
+    if (++att.n > 200) return ws.close(1008, 'too many messages');
+    if (m.type === 'hello' || m.type === 'update') {
+      if (typeof m.name === 'string') att.name = m.name.replace(/[\u0000-\u001f<>]/g, '').slice(0, 32).trim();
+      if (typeof m.device === 'string') att.device = m.device.replace(/[\u0000-\u001f<>]/g, '').slice(0, 24).trim();
+      if (typeof m.visible === 'boolean') att.visible = m.visible;
+      ws.serializeAttachment(att);
+      return this.nearbyPeers();
+    }
+    ws.serializeAttachment(att);
+    if (m.type === 'signal' && typeof m.to === 'string') {
+      const data = JSON.stringify(m.data ?? null);
+      if (data.length > 16000) return;
+      const target = this.nearbyOpen().find((w) => w.deserializeAttachment().id === m.to);
+      if (target) { try { target.send(JSON.stringify({ type: 'signal', from: att.id, name: att.name, device: att.device, data: m.data })); } catch {} }
+    }
+  }
   async webSocketError(ws) { try { ws.close(1011, 'error'); } catch {} }
 
   async isOwner(rec, token) {

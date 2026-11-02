@@ -94,6 +94,16 @@ function Privacy() {
         An inbox that is not used for 90 days is deleted.
       </P>
 
+      <H>Nearby</H>
+      <P>
+        While the Nearby screen is open, your browser joins a room for your network. The room is named after a
+        scrambled form of your network address that changes every day, so it cannot be turned back into the address.
+        Others in the room see the name you appear as and your device type, unless you switch Visible off. Files and
+        text you send there go straight to the other device over an encrypted connection; they never pass through or
+        get stored on our servers. To set up that direct connection, browsers ask a Cloudflare connection server
+        (STUN) which address they appear from, as video calls do.
+      </P>
+
       <H>What stays on your device</H>
       <P>Your browser stores a few things locally. They are never sent to us, and you can delete them by clearing this site's data in your browser.</P>
       <UL>
@@ -299,6 +309,7 @@ function Security() {
         <li>Burn links are deleted from the server in the same step that hands them out, so they can only be opened once.</li>
         <li>A typeable code (4 words) is turned into a lookup value and a key in your browser. The server stores only a hash of the lookup value and the link key locked with the code, so it cannot tell which code belongs to which link, and tries are limited per network.</li>
         <li>Sending to your own devices is end-to-end encrypted too. Paired devices swap public keys using 4 one-time words that never reach us, and each item is encrypted to the receiving device's key. We only see that a device received something.</li>
+        <li>Nearby sends files straight between two devices over an encrypted WebRTC connection; nothing is uploaded. Both screens show a 4-digit check code made from the two ends of the connection. If they match, no one, including our server, is relaying it in between.</li>
         <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
       </UL>
 
