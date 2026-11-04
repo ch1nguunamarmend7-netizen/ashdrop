@@ -122,14 +122,16 @@ export async function unlock(password) {
 export const me = () => api('me', {}, { auth: true });
 export async function signOut() { try { await api('logout', {}, { auth: true }); } catch {} saveSession(null); keepVaultKey(null); }
 
-export async function recover({ email, recoveryKey, newPassword }) {
+export async function recover({ email, recoveryKey, newPassword, newPin }) {
   const rk = await recoveryKeys(recoveryKey);
   let start1;
   try { start1 = await api('recover', { step: 'start', email: normEmail(email), recoveryAuth: rk.recoveryAuth }); }
   catch (e) { if (e.code === 'wrong') throw new Error('That recovery key does not match this email.'); throw e; }
   const vaultKey = await unwrap(rk.kek, start1.recoveryWrapped);
-  const { authKey, kek } = await passwordKeys(email, newPassword);
-  const data = await api('recover', { step: 'finish', email: normEmail(email), recoveryAuth: rk.recoveryAuth, newAuthKey: authKey, newWrapped: await wrap(kek, vaultKey) });
+  const body = { step: 'finish', email: normEmail(email), recoveryAuth: rk.recoveryAuth };
+  if (newPassword) { const { authKey, kek } = await passwordKeys(email, newPassword); Object.assign(body, { newAuthKey: authKey, newWrapped: await wrap(kek, vaultKey) }); }
+  if (newPin) body.newPin = await pinRecord(newPin, vaultKey);
+  const data = await api('recover', body);
   return start(email, data, vaultKey);
 }
 
@@ -145,10 +147,11 @@ export async function changePassword({ oldPassword, newPassword }) {
   } catch (e) { if (e.code === 'wrong') throw new Error('Your current password is not right.'); throw e; }
 }
 
-export async function deleteAccount(password) {
+export async function deleteAccount(secret) {
   const s = session();
-  const { authKey } = await passwordKeys(s.email, password);
-  try { await api('delete', { authKey }, { auth: true }); } catch (e) { if (e.code === 'wrong') throw new Error('That password is not right.'); throw e; }
+  const info = await api('me', {}, { auth: true });
+  const body = info.hasPassword ? { authKey: (await passwordKeys(s.email, secret)).authKey } : { pinAuth: (await pinKeys(secret, info.pin?.salt || 'AAAAAAAAAAAAAAAAAAAAAA')).auth };
+  try { await api('delete', body, { auth: true }); } catch (e) { if (e.code === 'wrong') throw new Error(info.hasPassword ? 'That password is not right.' : 'That PIN is not right.'); throw e; }
   saveSession(null); keepVaultKey(null);
 }
 
@@ -204,3 +207,95 @@ export async function signInWithPasskey() {
 }
 
 export const removePasskey = (id) => api('passkey/remove', { id }, { auth: true });
+
+/* ---------- vault PIN (for Google/Apple accounts, or as a quick unlock) ----------
+   PIN ─PBKDF2(600,000, random salt)─▶ pinAuth (sent, checked by the server, 10 tries)
+                                    └▶ part ─┐
+   server "share" (handed out after a correct PIN) ─┴─HKDF─▶ PIN kek, which wraps the vault key. */
+async function pinKeys(pin, salt) {
+  const base = await crypto.subtle.importKey('raw', enc.encode(String(pin)), 'PBKDF2', false, ['deriveBits']);
+  const m = await crypto.subtle.deriveBits({ name: 'PBKDF2', salt: b64urlDecode(salt), iterations: ITER, hash: 'SHA-256' }, base, 256);
+  const k = await hkdf(m, [['auth', 'ashdrop/v1/pin-auth', 'bits'], ['part', 'ashdrop/v1/pin-part', 'bits']]);
+  return k;
+}
+async function pinKek(part, share) {
+  const both = new Uint8Array([...b64urlDecode(part), ...b64urlDecode(share)]);
+  return (await hkdf(both, [['kek', 'ashdrop/v1/pin-kek', 'key']])).kek;
+}
+async function pinRecord(pin, vaultKey) {
+  const salt = b64url(crypto.getRandomValues(new Uint8Array(16)));
+  const share = b64url(crypto.getRandomValues(new Uint8Array(32)));
+  const { auth, part } = await pinKeys(pin, salt);
+  return { salt, auth, share, wrapped: await wrap(await pinKek(part, share), vaultKey) };
+}
+export const pinOk = (pin) => String(pin).length >= 6;
+
+export async function unlockWithPin(pin) {
+  const info = await api('me', {}, { auth: true });
+  if (!info.pin) throw new Error('PIN unlock is off for this account. Use a passkey or your recovery key.');
+  const { auth, part } = await pinKeys(pin, info.pin.salt);
+  let r;
+  try { r = await api('pin/unlock', { pinAuth: auth }, { auth: true }); }
+  catch (e) {
+    if (e.code === 'wrong_pin') throw new Error('That PIN is not right.');
+    if (e.code === 'pin_disabled') throw new Error('Too many wrong PINs, so PIN unlock is now off. Use a passkey or your recovery key, then choose a new PIN.');
+    throw e;
+  }
+  keepVaultKey(await unwrap(await pinKek(part, r.share), r.wrapped));
+  return info;
+}
+
+export async function setPin(pin) {
+  const vaultKey = vaultKeyRaw();
+  if (!vaultKey) throw new Error('Unlock your vault first.');
+  if (!pinOk(pin)) throw new Error('Use a PIN of at least 6 digits or characters.');
+  return api('pin/set', { pin: await pinRecord(pin, vaultKey) }, { auth: true });
+}
+
+/* ---------- Sign in with Google / Apple ---------- */
+const OAUTH_STATE = 'ashdrop.oauthState';
+export async function oauthProviders() {
+  try { return await (await fetch('/api/oauth/providers')).json(); } catch { return {}; }
+}
+/** Go to Google or Apple. mode 'link' connects it to the signed-in account. */
+export async function startOAuth(provider, mode = 'signin') {
+  const res = await fetch(`/api/oauth/${provider}/prepare`, { method: 'POST', headers: { 'content-type': 'application/json', ...(mode === 'link' ? authHeader() : {}) }, body: JSON.stringify({ mode }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error === 'rate_limited' ? 'Too many tries. Wait a minute.' : 'Could not start signing in.');
+  try { sessionStorage.setItem(OAUTH_STATE, data.state); } catch {}
+  location.assign(data.url);
+}
+const OAUTH_ERRORS = {
+  cancelled: 'Signing in was cancelled.', expired: 'That took too long. Try again.', no_email: 'Your account there has no verified email address.',
+  email_has_account: 'There is already an Ashdrop account with that email. Sign in with your password, then connect Google in Settings.',
+  identity_in_use: 'That account is already connected to another Ashdrop account.', bad_state: 'This sign-in did not start in this browser tab. Try again.',
+};
+/** After coming back: read #oauth=…&state=… (or #oauth_error=…). Returns null when there is nothing to finish. */
+export async function finishOAuth(hash = location.hash) {
+  const q = new URLSearchParams(hash.replace(/^#/, ''));
+  if (q.get('oauth_error')) return { error: OAUTH_ERRORS[q.get('oauth_error')] || 'Signing in did not work. Try again.' };
+  const ticket = q.get('oauth');
+  if (!ticket) return null;
+  let expected = null;
+  try { expected = sessionStorage.getItem(OAUTH_STATE); sessionStorage.removeItem(OAUTH_STATE); } catch {}
+  if (!expected || expected !== q.get('state')) return { error: OAUTH_ERRORS.bad_state };
+  const res = await fetch('/api/oauth/exchange', { method: 'POST', headers: { 'content-type': 'application/json', ...authHeader() }, body: JSON.stringify({ ticket }) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) return { error: OAUTH_ERRORS[data.error] || 'Signing in did not work. Try again.' };
+  if (data.status === 'signedin') saveSession({ uid: data.account.uid, token: data.token, email: data.account.email }); // still locked
+  return data;
+}
+/** New account after Google/Apple: choose a vault PIN; get a recovery key. */
+export async function oauthSignUp({ signupTicket, email, pin, invite, ownerKey }) {
+  if (!pinOk(pin)) throw new Error('Use a PIN of at least 6 digits or characters.');
+  const vaultKey = crypto.getRandomValues(new Uint8Array(32));
+  const recoveryKey = newRecoveryKey();
+  const rk = await recoveryKeys(recoveryKey);
+  const res = await fetch('/api/oauth/signup', {
+    method: 'POST', headers: { 'content-type': 'application/json', ...(ownerKey ? { 'x-ashdrop-owner-key': ownerKey } : {}) },
+    body: JSON.stringify({ signupTicket, invite, recoveryAuth: rk.recoveryAuth, recoveryWrapped: await wrap(rk.kek, vaultKey), pin: await pinRecord(pin, vaultKey) }),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(errorText(data.error, res.status) + (data.error === 'expired' ? ' Start again.' : ''));
+  return { account: start(email, data, vaultKey), recoveryKey };
+}

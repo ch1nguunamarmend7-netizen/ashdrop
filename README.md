@@ -33,6 +33,7 @@ wrangler.toml           Cloudflare config (R2 bucket, Durable Object, static ass
 - **Typeable codes**: 4 words that open a link on a device that cannot scan the QR code.
 - **Nearby**: send files and text straight to devices on the same Wi-Fi (WebRTC, device to device, no size limit), with Accept prompts and a matching check code.
 - **Your devices**: pair your phone and computer once, then send any link to the other with one tap.
+- **Vault** (invite-only beta): encrypted file storage with an account. Sign in with email and password, Google, or a passkey; the vault itself opens only with your password, a vault PIN, a passkey or the recovery key, so Google never holds a key to it.
 - **Owner key**: whoever runs the site can set an `OWNER_KEY` secret and paste it in Settings for links up to 95 MB that last up to 7 days.
 - **Password + lockout.** The password derives two keys: one encrypts, the other proves knowledge
   to the server. The server stores only a SHA-256 of that proof and releases nothing until it
@@ -163,6 +164,25 @@ For fast UI work, run `npm run dev` (Vite on :5173) in a second terminal; it for
 
 Already configured in `wrangler.toml` (needs Wrangler 4.36 or newer): 20 new links and 60 open
 attempts per IP per minute, plus Workers Logs. Change the numbers there if real users hit them.
+
+### Sign in with Google (optional)
+
+The button shows only when these settings exist.
+
+1. In Google Cloud Console, open APIs & Services → OAuth consent screen. Choose External, app name Ashdrop,
+   your support email, and add only the scopes `openid` and `email`. Add https://ashdrop.cc/privacy as the
+   privacy policy, then publish the app.
+2. APIs & Services → Credentials → Create credentials → OAuth client ID → Web application.
+   Authorized redirect URI: `https://ashdrop.cc/api/oauth/google/callback` (no JavaScript origins needed).
+3. Save the two values as Worker secrets:
+   ```bash
+   npx wrangler secret put GOOGLE_CLIENT_ID
+   npx wrangler secret put GOOGLE_CLIENT_SECRET
+   ```
+
+Sign in with Apple works the same way with `APPLE_CLIENT_ID` (a Services ID), `APPLE_TEAM_ID`, `APPLE_KEY_ID`
+and `APPLE_PRIVATE_KEY` (the .p8 file's contents), redirect URI `https://ashdrop.cc/api/oauth/apple/callback`.
+It needs a paid Apple Developer account.
 
 ### Removing a reported link
 

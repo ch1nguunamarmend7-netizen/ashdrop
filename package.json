@@ -7,7 +7,7 @@
     "dev": "vite",
     "dev:worker": "npm run build && wrangler dev",
     "build": "vite build && node scripts/postbuild.mjs",
-    "test": "node --test test/worker.test.mjs test/vault.test.mjs",
+    "test": "node --test test/worker.test.mjs test/vault.test.mjs test/oauth.test.mjs",
     "deploy": "npm run build && wrangler deploy",
     "verify": "node scripts/verify.mjs"
   },

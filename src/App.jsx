@@ -806,7 +806,65 @@ function IncomingModal({ req, onClose }) {
 const fieldCls = 'w-full bg-well border border-line rounded-lg px-3 py-2.5 text-[14px] outline-hidden focus:border-mute';
 
 /* Sign in, create an account (invite only for now), or reset with the recovery key. */
-function AccountGate({ onReady, ownerKey }) {
+function ProviderButtons({ label = 'Continue', disabled }) {
+  const [p, setP] = useState({});
+  const [busy, setBusy] = useState('');
+  useEffect(() => { account.oauthProviders().then(setP); }, []);
+  const list = [['google', 'Google', GoogleMark], ['apple', 'Apple', AppleMark]].filter(([id]) => p[id]);
+  if (!list.length) return null;
+  return (
+    <div className="flex flex-col gap-2 mb-4">
+      {list.map(([id, name, Mark]) => (
+        <button key={id} id={`acct-${id}`} type="button" disabled={disabled || !!busy} onClick={() => { setBusy(id); account.startOAuth(id).catch(() => setBusy('')); }}
+          className="press rounded-lg py-2.5 text-[13.5px] font-semibold border border-line hover:border-mute flex items-center justify-center gap-2.5 disabled:opacity-60">
+          <Mark />{busy === id ? 'Opening…' : `${label} with ${name}`}
+        </button>
+      ))}
+      <div className="flex items-center gap-3 text-[11.5px] text-mute mt-2"><span className="h-px flex-1 bg-line" />or with email<span className="h-px flex-1 bg-line" /></div>
+    </div>
+  );
+}
+const GoogleMark = () => (
+  <svg width="16" height="16" viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.2-.1-2.3-.4-3.5z"/><path fill="#FF3D00" d="m6.3 14.7 6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-8l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.2-.1-2.3-.4-3.5z"/></svg>
+);
+const AppleMark = () => (
+  <svg width="15" height="16" viewBox="0 0 17 20" aria-hidden="true" fill="currentColor"><path d="M14.1 10.6c0-2.6 2.1-3.8 2.2-3.9-1.2-1.8-3.1-2-3.7-2-1.6-.2-3.1.9-3.9.9-.8 0-2-.9-3.4-.9-1.7 0-3.3 1-4.2 2.6-1.8 3.1-.5 7.7 1.3 10.2.9 1.2 1.9 2.6 3.2 2.6 1.3-.1 1.8-.8 3.3-.8s2 .8 3.4.8c1.4 0 2.3-1.3 3.1-2.5 1-1.4 1.4-2.8 1.4-2.9 0 0-2.7-1-2.7-4.1zM11.6 3c.7-.9 1.2-2 1.1-3.2-1 0-2.3.7-3 1.6-.7.8-1.2 2-1.1 3.1 1.1.1 2.3-.6 3-1.5z"/></svg>
+);
+
+/* After Google/Apple, for someone new: invite + vault PIN, then the recovery key. */
+function OAuthSetup({ res, ownerKey, onReady, onCancel }) {
+  const [invite, setInvite] = useState('');
+  const [pin, setPin] = useState(''), [pin2, setPin2] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState(null);
+  const name = res.provider === 'apple' ? 'Apple' : 'Google';
+  if (recoveryKey) return <RecoveryKeyCard recoveryKey={recoveryKey} email={res.email} pinMode onDone={onReady} />;
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!account.pinOk(pin)) return setMsg('Use a PIN of at least 6 digits or characters.');
+    if (pin !== pin2) return setMsg('The two PINs are not the same.');
+    setBusy(true); setMsg('');
+    try { setRecoveryKey((await account.oauthSignUp({ ...res, pin, invite, ownerKey })).recoveryKey); } catch (err) { setMsg(err.message); }
+    setBusy(false);
+  };
+  return (
+    <form id="oauth-setup" onSubmit={submit} className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-3">
+      <h2 className="font-display text-xl">Set up your vault</h2>
+      <p className="text-[13px] text-mute">{name} confirmed <span className="text-fg">{res.email}</span>. {name} only proves who you are. To open the vault itself you also need a key that never leaves your devices, so choose a vault PIN. On phones and laptops you can add a passkey later and skip the PIN.</p>
+      {!ownerKey && <label className="text-[12.5px] text-mute">Invite code<input id="oauth-invite" required value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} className={fieldCls + ' mt-1 font-mono uppercase text-fg'} /></label>}
+      <label className="text-[12.5px] text-mute">Vault PIN<input id="oauth-pin" type="password" required autoComplete="new-password" inputMode="text" value={pin} onChange={(e) => setPin(e.target.value)} placeholder="At least 6 digits or characters" className={fieldCls + ' mt-1 text-fg'} /></label>
+      <label className="text-[12.5px] text-mute">Repeat it<input id="oauth-pin2" type="password" required autoComplete="new-password" value={pin2} onChange={(e) => setPin2(e.target.value)} className={fieldCls + ' mt-1 text-fg'} /></label>
+      <p className="text-[12px] text-mute">Longer is safer. After 10 wrong tries the PIN stops working and you need your passkey or recovery key.</p>
+      {msg && <div role="alert" className="rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2">{msg}</div>}
+      <button id="oauth-create" disabled={busy} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Creating…' : 'Create my vault'}</button>
+      <button type="button" onClick={onCancel} className="text-[12.5px] text-mute hover:text-fg">Cancel</button>
+      {!ownerKey && <p className="text-[12px] text-mute">The vault is invite-only while we test it. <a href="/contact" className="underline underline-offset-2 hover:text-fg">Ask for an invite</a>.</p>}
+    </form>
+  );
+}
+
+function AccountGate({ onReady, ownerKey, initialMsg = '' }) {
   const [mode, setMode] = useState('signin'); // signin | signup | recover
   const [email, setEmail] = useState('');
   const [pw, setPw] = useState('');
@@ -814,7 +872,7 @@ function AccountGate({ onReady, ownerKey }) {
   const [invite, setInvite] = useState('');
   const [rk, setRk] = useState('');
   const [busy, setBusy] = useState(false);
-  const [msg, setMsg] = useState('');
+  const [msg, setMsg] = useState(initialMsg);
   const [recoveryKey, setRecoveryKey] = useState(null);
   const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); } catch (e) { setMsg(e.message); } setBusy(false); };
   const submit = (e) => {
@@ -838,7 +896,8 @@ function AccountGate({ onReady, ownerKey }) {
         </div>
       )}
       {mode === 'recover' && <h2 className="font-display text-xl mb-1">Reset your password</h2>}
-      {mode === 'recover' && <p className="text-[13px] text-mute mb-4">Your recovery key unlocks the vault and lets you choose a new password. Ashdrop cannot do this for you.</p>}
+      {mode === 'recover' && <p className="text-[13px] text-mute mb-4">Your recovery key unlocks the vault and lets you choose a new password. Ashdrop cannot do this for you. If you use Google, sign in with it first, then pick "Use your recovery key".</p>}
+      {mode !== 'recover' && <ProviderButtons label={mode === 'signup' ? 'Sign up' : 'Continue'} disabled={busy} />}
       <form onSubmit={submit} className="flex flex-col gap-3">
         <label className="text-[12.5px] text-mute">Email<input id="acct-email" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} className={fieldCls + ' mt-1 text-fg'} /></label>
         {mode === 'recover' && <label className="text-[12.5px] text-mute">Recovery key<input id="acct-rk" required value={rk} onChange={(e) => setRk(e.target.value)} placeholder="XXXX-XXXX-…" autoComplete="off" spellCheck={false} className={fieldCls + ' mt-1 font-mono text-fg'} /></label>}
@@ -864,14 +923,14 @@ function AccountGate({ onReady, ownerKey }) {
   );
 }
 
-function RecoveryKeyCard({ recoveryKey, email, onDone }) {
+function RecoveryKeyCard({ recoveryKey, email, onDone, pinMode }) {
   const [ok, setOk] = useState(false);
   const [copied, setCopied] = useState(false);
   const save = () => browserDownloads.save({ filename: 'ashdrop-recovery-key.txt', data: new Blob([`Ashdrop recovery key\n\nAccount: ${email}\nRecovery key: ${recoveryKey}\n\nIf you forget your password, this key is the only way back into your vault.\nKeep it somewhere safe and offline. Anyone with this key and your email can open your vault.\n`]) });
   return (
     <div id="recovery-card" className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-4">
       <h2 className="font-display text-xl">Save your recovery key</h2>
-      <p className="text-[13.5px] text-mute">If you forget your password, this key is the only way back into your vault. We cannot reset it for you, and we will not show it again.</p>
+      <p className="text-[13.5px] text-mute">If you forget your {pinMode ? 'PIN and lose your passkeys' : 'password'}, this key is the only way back into your vault. We cannot reset it for you, and we will not show it again.</p>
       <div id="recovery-key" className="rounded-xl bg-well border border-line p-4 font-mono text-[14px] text-center select-all">{recoveryKey.split('-').map((g, i) => <React.Fragment key={i}>{i > 0 && <>-<wbr /></>}<span className="whitespace-nowrap">{g}</span></React.Fragment>)}</div>
       <div className="flex gap-2">
         <button onClick={save} className="press flex-1 rounded-lg py-2.5 text-[13px] font-semibold border border-line hover:border-mute">Download as a file</button>
@@ -884,20 +943,41 @@ function RecoveryKeyCard({ recoveryKey, email, onDone }) {
 }
 
 function UnlockGate({ email, onReady, onSignOut }) {
-  const [pw, setPw] = useState('');
+  const [info, setInfo] = useState(null);
+  const [secret, setSecret] = useState('');
+  const [rk, setRk] = useState(''), [fresh, setFresh] = useState('');
+  const [mode, setMode] = useState('normal'); // normal | recover
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); onReady(); } catch (e) { setMsg(e.message); } setBusy(false); };
+  useEffect(() => { account.me().then(setInfo).catch(() => setInfo({ hasPassword: true })); }, []);
+  const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); onReady(); } catch (e) { setMsg(e.message); account.me().then(setInfo).catch(() => {}); } setBusy(false); };
+  const usePw = !!info?.hasPassword, usePin = !usePw && !!info?.pin;
+  const passkeys = account.passkeysSupported() && (info?.passkeys?.length ?? 1) > 0;
+  const card = 'pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-3';
+  if (mode === 'recover') return (
+    <form onSubmit={(e) => { e.preventDefault(); if (usePw ? fresh.length < 10 : !account.pinOk(fresh)) return setMsg(usePw ? 'Use a password of at least 10 characters.' : 'Use a PIN of at least 6 digits or characters.'); run(() => account.recover({ email, recoveryKey: rk, ...(usePw ? { newPassword: fresh } : { newPin: fresh }) })); }} className={card}>
+      <h2 className="font-display text-xl">Use your recovery key</h2>
+      <p className="text-[13px] text-mute">It opens the vault and lets you choose a new {usePw ? 'password' : 'vault PIN'}. It also signs you out everywhere else.</p>
+      <input id="unlock-rk" required value={rk} onChange={(e) => setRk(e.target.value)} placeholder="XXXX-XXXX-…" autoComplete="off" spellCheck={false} aria-label="Recovery key" className={fieldCls + ' font-mono'} />
+      <input id="unlock-new" type="password" required autoComplete="new-password" value={fresh} onChange={(e) => setFresh(e.target.value)} placeholder={usePw ? 'New password' : 'New vault PIN'} aria-label={usePw ? 'New password' : 'New vault PIN'} className={fieldCls} />
+      {msg && <div role="alert" className="text-[13px] text-warn">{msg}</div>}
+      <button id="unlock-recover" disabled={busy} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Working…' : 'Open my vault'}</button>
+      <button type="button" onClick={() => { setMode('normal'); setMsg(''); }} className="text-[12.5px] text-mute hover:text-fg">Back</button>
+    </form>
+  );
   return (
-    <form onSubmit={(e) => { e.preventDefault(); run(() => account.unlock(pw)); }} className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-3">
+    <form onSubmit={(e) => { e.preventDefault(); run(() => (usePw ? account.unlock(secret) : account.unlockWithPin(secret))); }} className={card}>
       <h2 className="font-display text-xl">Unlock your vault</h2>
       <p className="text-[13px] text-mute">Signed in as <span className="text-fg">{email}</span>. Your vault locks when you close the tab.</p>
-      <input id="unlock-pw" type="password" autoFocus autoComplete="current-password" placeholder="Password" value={pw} onChange={(e) => setPw(e.target.value)} className={fieldCls} />
+      {!info ? <div className="text-[13px] text-mute py-2">Checking…</div> : (usePw || usePin) ? (<>
+        <input id="unlock-pw" type="password" autoFocus autoComplete={usePw ? 'current-password' : 'off'} placeholder={usePw ? 'Password' : 'Vault PIN'} aria-label={usePw ? 'Password' : 'Vault PIN'} value={secret} onChange={(e) => setSecret(e.target.value)} className={fieldCls} />
+        <button id="unlock-submit" disabled={busy || !secret} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Unlocking…' : 'Unlock'}</button>
+      </>) : <p id="unlock-nopin" className="text-[13px] text-warn">PIN unlock is off after too many wrong tries. Use a passkey or your recovery key, then choose a new PIN.</p>}
       {msg && <div role="alert" className="text-[13px] text-warn">{msg}</div>}
-      <button id="unlock-submit" disabled={busy || !pw} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Unlocking…' : 'Unlock'}</button>
-      <div className="flex justify-between text-[12.5px]">
-        {account.passkeysSupported() ? <button type="button" onClick={() => run(() => account.signInWithPasskey())} className="text-fg underline underline-offset-2 hover:text-ember">Use a passkey</button> : <span />}
-        <button type="button" onClick={onSignOut} className="text-mute hover:text-fg">Sign out</button>
+      <div className="flex flex-wrap gap-x-4 gap-y-2 text-[12.5px]">
+        {passkeys && <button id="unlock-passkey" type="button" onClick={() => run(() => account.signInWithPasskey())} className="text-fg underline underline-offset-2 hover:text-ember">Use a passkey</button>}
+        <button id="unlock-use-rk" type="button" onClick={() => { setMode('recover'); setMsg(''); }} className="text-mute hover:text-fg">Use your recovery key</button>
+        <button type="button" onClick={onSignOut} className="text-mute hover:text-fg ml-auto">Sign out</button>
       </div>
     </form>
   );
@@ -1016,7 +1096,7 @@ function CloudVault({ onShare, toast }) {
                         <button type="button" onClick={() => setRenaming(null)} className="text-[12.5px] text-mute">Cancel</button>
                       </form>
                     ) : (
-                      <div className="min-w-0 flex-1">
+                      <div className="min-w-0 flex-1 basis-[calc(100%-3rem)] sm:basis-auto">
                         <div className="text-[13.5px] font-medium truncate">{f.name}</div>
                         <div className="text-[12px] text-mute">{fmtBytes(f.plainSize ?? f.size)} · {new Date(f.created).toLocaleDateString()}{f.folder ? ` · ${f.folder}` : ''}</div>
                       </div>
@@ -1048,12 +1128,25 @@ function CloudVault({ onShare, toast }) {
 }
 
 /* The Files side of the Vault tab: sign in, unlock, or the vault. */
+let oauthReturn = null; // the hash is read once per page load, even if this mounts twice
 function VaultFiles({ onShare, toast }) {
   const [, rerender] = useState(0);
+  const [ret, setRet] = useState(() => (/[#&](oauth|oauth_error)=/.test(location.hash) ? { pending: true } : null));
+  useEffect(() => {
+    if (!ret?.pending) return;
+    oauthReturn ||= account.finishOAuth(location.hash);
+    try { history.replaceState(null, '', location.pathname + location.search); } catch {}
+    oauthReturn.then((r) => {
+      if (r?.status === 'linked') toast(`${r.provider === 'apple' ? 'Apple' : 'Google'} is connected. You can sign in with it now.`);
+      setRet(r && (r.error || r.status === 'new') ? r : null);
+    });
+  }, []);
   const s = account.session();
-  const ready = () => rerender(n => n + 1);
+  const ready = () => { setRet(null); rerender(n => n + 1); };
   const ownerKey = getOwnerKey();
-  if (!s) return <AccountGate onReady={ready} ownerKey={ownerKey || undefined} />;
+  if (ret?.pending) return <div className="text-center text-mute text-[13px] py-16">Signing you in…</div>;
+  if (ret?.status === 'new') return <OAuthSetup res={ret} ownerKey={ownerKey || undefined} onReady={() => { ready(); toast('Your vault is ready. Tip: add a passkey in Settings → Account to unlock without the PIN.'); }} onCancel={() => setRet(null)} />;
+  if (!s) return <AccountGate key={ret?.error || ''} initialMsg={ret?.error || ''} onReady={ready} ownerKey={ownerKey || undefined} />;
   if (!account.vaultKeyRaw()) return <UnlockGate email={s.email} onReady={ready} onSignOut={async () => { await account.signOut(); ready(); }} />;
   return <CloudVault onShare={onShare} toast={toast} />;
 }
@@ -1061,7 +1154,9 @@ function VaultFiles({ onShare, toast }) {
 /* Settings → Account */
 function AccountSettings({ toast }) {
   const [info, setInfo] = useState(null);
-  const [phase, setPhase] = useState(null); // 'password' | 'delete'
+  const [phase, setPhase] = useState(null); // 'password' | 'pin' | 'delete'
+  const [providers, setProviders] = useState({});
+  useEffect(() => { account.oauthProviders().then(setProviders); }, []);
   const [a, setA] = useState(''), [b, setB] = useState('');
   const [msg, setMsg] = useState('');
   const [busy, setBusy] = useState(false);
@@ -1079,7 +1174,7 @@ function AccountSettings({ toast }) {
           <button id="acct-signout" onClick={async () => { await account.signOut(); location.reload(); }} className="press rounded-lg px-3 py-2 text-[13px] font-semibold border border-line hover:border-mute">Sign out</button>
         </div>
       </Row>
-      <Row stack title="Passkeys" sub={account.passkeysSupported() ? 'Unlock your vault with Face ID, a fingerprint or your device PIN instead of your password. Your password still works too.' : 'This browser does not support passkeys.'}>
+      <Row stack title="Passkeys" sub={account.passkeysSupported() ? `Unlock your vault with Face ID, a fingerprint or your device screen lock instead of your ${info?.hasPassword === false ? 'vault PIN' : 'password'}.` : 'This browser does not support passkeys.'}>
         {info?.passkeys?.length > 0 && (
           <ul id="passkey-list" className="flex flex-col gap-1.5">
             {info.passkeys.map(p => (
@@ -1092,22 +1187,48 @@ function AccountSettings({ toast }) {
         )}
         {account.passkeysSupported() && <div><button id="passkey-add" disabled={!unlocked || busy} onClick={() => run(async () => { await account.addPasskey(deviceType()); toast('Passkey added. You can unlock with it now.'); load(); })} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary disabled:opacity-50">{unlocked ? 'Add a passkey on this device' : 'Unlock your vault to add a passkey'}</button></div>}
       </Row>
-      <Row stack title="Password" sub="Changing it signs you out on your other devices.">
+      {(providers.google || providers.apple || info?.identities?.length > 0) && (
+        <Row stack title="Sign in with" sub="Google or Apple only proves who you are. Your vault still needs your password, PIN or a passkey to open, so they never see your files.">
+          <ul id="identity-list" className="flex flex-col gap-1.5">
+            {[['google', 'Google', GoogleMark], ['apple', 'Apple', AppleMark]].filter(([id]) => providers[id] || info?.identities?.some(x => x.provider === id)).map(([id, name, Mark]) => {
+              const linked = info?.identities?.find(x => x.provider === id);
+              return (
+                <li key={id} className="flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-[13px]">
+                  <Mark /><span className="flex-1 truncate">{name}{linked && <span className="text-mute"> · {linked.email}</span>}</span>
+                  {linked ? <span className="text-[12px] text-mute">Connected</span>
+                    : <button id={`connect-${id}`} onClick={() => run(() => account.startOAuth(id, 'link'))} className="text-[12.5px] font-semibold text-fg underline underline-offset-2 hover:text-ember">Connect</button>}
+                </li>
+              );
+            })}
+          </ul>
+        </Row>
+      )}
+      <Row stack title="Vault PIN" sub={info?.pin ? 'Opens the vault on devices without a passkey. Stops working after 10 wrong tries.' : info && !info.hasPassword ? 'PIN unlock is off. Set a new PIN to turn it back on.' : 'Optional. A PIN can open the vault on devices without a passkey, as well as your password.'}>
+        {phase === 'pin' ? (
+          <form onSubmit={(e) => { e.preventDefault(); if (!account.pinOk(a)) return setMsg('Use a PIN of at least 6 digits or characters.'); if (a !== b) return setMsg('The two PINs are not the same.'); run(async () => { await account.setPin(a); setPhase(null); setA(''); setB(''); toast('Vault PIN saved.'); load(); }); }} className="flex flex-col sm:flex-row gap-2">
+            <input id="pin-new" type="password" placeholder="New PIN" autoComplete="new-password" value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
+            <input id="pin-new2" type="password" placeholder="Repeat it" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} className={fieldCls} />
+            <button id="pin-save" disabled={busy} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary shrink-0">Save</button>
+          </form>
+        ) : <div><button id="pin-change" disabled={!unlocked} onClick={() => { setA(''); setB(''); setPhase('pin'); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute disabled:opacity-50">{!unlocked ? 'Unlock your vault first' : info?.pin ? 'Change PIN' : 'Set a PIN'}</button></div>}
+      </Row>
+      {info?.hasPassword !== false && <Row stack title="Password" sub="Changing it signs you out on your other devices.">
         {phase === 'password' ? (
           <form onSubmit={(e) => { e.preventDefault(); if (b.length < 10) return setMsg('Use at least 10 characters.'); run(async () => { await account.changePassword({ oldPassword: a, newPassword: b }); setPhase(null); setA(''); setB(''); toast('Password changed.'); }); }} className="flex flex-col sm:flex-row gap-2">
             <input type="password" placeholder="Current password" autoComplete="current-password" value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
             <input type="password" placeholder="New password" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} className={fieldCls} />
             <button disabled={busy} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary shrink-0">Change</button>
           </form>
-        ) : <div><button disabled={!unlocked} onClick={() => setPhase('password')} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute disabled:opacity-50">{unlocked ? 'Change password' : 'Unlock your vault first'}</button></div>}
-      </Row>
+        ) : <div><button disabled={!unlocked} onClick={() => { setA(''); setB(''); setPhase('password'); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute disabled:opacity-50">{unlocked ? 'Change password' : 'Unlock your vault first'}</button></div>}
+      </Row>}
       <Row stack title="Delete account" sub="Deletes every file in your vault and the account itself, right away. This cannot be undone.">
         {phase === 'delete' ? (
           <form onSubmit={(e) => { e.preventDefault(); run(async () => { await account.deleteAccount(a); location.reload(); }); }} className="flex flex-col sm:flex-row gap-2">
-            <input type="password" placeholder="Your password" value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
+            <input id="delete-secret" type="password" placeholder={info?.hasPassword === false ? 'Your vault PIN' : 'Your password'} value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
             <button disabled={busy || !a} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-burn shrink-0">Delete everything</button>
           </form>
-        ) : <div><button onClick={() => { setA(''); setPhase('delete'); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember">Delete account</button></div>}
+        ) : info && !info.hasPassword && !info.pin ? <div className="text-[13px] text-mute">Set a vault PIN first, then you can delete the account with it.</div>
+          : <div><button id="delete-account" onClick={() => { setA(''); setPhase('delete'); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember">Delete account</button></div>}
       </Row>
       {msg && <div role="alert" className="text-[13px] text-warn pb-3">{msg}</div>}
     </>
@@ -2994,7 +3115,7 @@ function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0, t1 = 'var(
 }
 
 function App() {
-  const [view, setView] = useState(() => (/^\/nearby\/?$/.test(location.pathname) ? 'nearby' : 'share'));
+  const [view, setView] = useState(() => (/^\/nearby\/?$/.test(location.pathname) ? 'nearby' : /^\/vault\/?$/.test(location.pathname) ? 'vault' : 'share'));
   const [step, setStep] = useState('type'); // type → (format) → content → protect
   const [maxIdx, setMaxIdx] = useState(0);
   const [dir, setDir] = useState('fwd');
@@ -3048,7 +3169,7 @@ function App() {
   const [folders, setFolders] = useState(savedFolders?.list || []);
   const [folderColors, setFolderColors] = useState(savedFolders?.colors || {});
   useEffect(() => { try { localStorage.setItem('ashdrop.folders.v2', JSON.stringify({ list: folders, colors: folderColors })); } catch {} }, [folders, folderColors]);
-  const [vaultTabState, setVaultTab] = useState(() => (account.session() ? 'files' : 'links'));
+  const [vaultTabState, setVaultTab] = useState(() => (account.session() || /^\/vault\/?$/.test(location.pathname) ? 'files' : 'links'));
   const vaultTab = FEATURES.vaultFiles || FEATURES.cloudVault ? vaultTabState : 'links';
   // Links you sent, kept on this device only (they include each link's key and owner token).
   // With the passcode lock on they are encrypted at rest and only decrypted in memory after unlocking.

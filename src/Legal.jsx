@@ -98,7 +98,10 @@ function Privacy() {
       <P>
         If you create a vault account, we keep your email address (to sign you in), and a scrambled check value made
         from your password in your browser, never the password itself. Your vault key is stored only in locked form:
-        locked by your password, by your recovery key and by each passkey you add, none of which we have. Files,
+        locked by your password or vault PIN, by your recovery key and by each passkey you add, none of which we
+        have. If you sign in with Google or Apple, we receive your email address and an account ID from them, and keep
+        only that email and a scrambled form of the ID, to know it is you next time. We do not get your contacts,
+        name or anything else, and Google or Apple only learn that you signed in to Ashdrop. Files,
         file names and folders are encrypted in your browser before upload; we see their sizes, how many there are and
         when they were added. We also keep a list of where you are signed in (the browser type, for your own overview).
         Deleting your account removes all of this and every stored file right away.
@@ -169,7 +172,8 @@ function Terms() {
       <H>Vault accounts</H>
       <UL>
         <li>The vault is in an invite-only test. Each account has the storage amount it was created with.</li>
-        <li>Only you can unlock your vault. If you lose both your password and your recovery key, nobody, including us, can get your files back.</li>
+        <li>Only you can unlock your vault. If you lose your password or PIN, your passkeys and your recovery key, nobody, including us, can get your files back.</li>
+        <li>If you sign in with Google or Apple, their terms apply to that account too. Losing access to it does not lock you out for good: your recovery key still opens the vault.</li>
         <li>Keep other copies of anything important. While the vault is in testing we may need to change or end it; if we end it, we will tell you by email at least 30 days before and give you time to download your files.</li>
         <li>The rules below apply to the vault too. We may close accounts that break them, which deletes their files.</li>
       </UL>
@@ -178,7 +182,7 @@ function Terms() {
       <UL>
         <li>You are responsible for what you share and who you share it with.</li>
         <li>Anyone who has a link (and its password, if it has one) can open it. Keep links and passwords private.</li>
-        <li>Keep your vault password and recovery key private. Anyone with your email and either of them can open your vault.</li>
+        <li>Keep your vault password, PIN and recovery key private. Anyone with your email and your password or recovery key can open your vault, and so can anyone signed in to your Google or Apple account who also knows your PIN.</li>
         <li>We cannot read, recover or restore anything. Do not use Ashdrop as the only copy of something you need.</li>
       </UL>
 
@@ -330,6 +334,8 @@ function Security() {
         <li>Sending to your own devices is end-to-end encrypted too. Paired devices swap public keys using 4 one-time words that never reach us, and each item is encrypted to the receiving device's key. We only see that a device received something.</li>
         <li>The vault works like a password manager: your password is turned into two keys in your browser. One signs you in; the other unlocks your vault key and never leaves your device. Every file has its own key and is sealed in pieces that cannot be swapped or reordered without being detected.</li>
         <li>Passkeys can unlock the vault too. The passkey proves who you are with a signature we check, and gives your browser a secret (the WebAuthn PRF extension) that unlocks the vault key. That secret never reaches us.</li>
+        <li>Signing in with Google or Apple only proves who you are. They never see your vault key, so they cannot open your files, and neither can someone who takes over that account without also having your PIN, a passkey or your recovery key. We check the answer comes from them, is meant for Ashdrop, and belongs to the sign-in this tab started.</li>
+        <li>A vault PIN works like this: half of the key that unlocks your vault comes from the PIN in your browser, and the other half is held by our server, which hands it out only for the right PIN and turns PIN unlock off after 10 wrong tries.</li>
         <li>Nearby sends files straight between two devices over an encrypted WebRTC connection; nothing is uploaded. Both screens show a 4-digit check code made from the two ends of the connection. If they match, no one, including our server, is relaying it in between.</li>
         <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
       </UL>
@@ -338,6 +344,7 @@ function Security() {
       <UL>
         <li><span className="text-fg">Anyone who has the full link can open it.</span> If you send it through email or a chat app, that company stores the link. Add a password and send it a different way.</li>
         <li><span className="text-fg">If you lose both your password and your recovery key, your vault is gone.</span> That is the price of nobody else being able to open it. Keep the recovery key somewhere safe.</li>
+        <li><span className="text-fg">A short PIN is weaker than a password.</span> The 10-try limit stops guessing through the site, but someone holding a copy of our stored data could try every 6-digit PIN quickly. A passkey, or a long PIN made of words, closes that gap.</li>
         <li><span className="text-fg">A typeable code is weaker than a full link.</span> 4 words are about 44 bits, against 256 for a link. That is plenty against people guessing online, but someone holding a copy of our stored data and a lot of computing power could eventually try every code. Codes die with their link, and a password closes that gap, so add one for anything very sensitive.</li>
         <li>Once someone opens a secret, it is on their screen. We cannot stop screenshots or copies.</li>
         <li>A phone or computer with malware on it. No website can protect against that.</li>

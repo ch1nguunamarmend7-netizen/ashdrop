@@ -4,6 +4,7 @@
 
 import { LinkDO, json, sha256b64, bytesToB64url } from './link.js';
 import { UserDO, handleAccount, handleVault } from './vault.js';
+import { handleOAuth } from './oauth.js';
 export { LinkDO, UserDO };
 
 const MAX_BODY = 26 * 1024 * 1024;             // 25 MB free-tier file + small header + GCM tags
@@ -98,6 +99,7 @@ async function handleApi(request, env, url, ctx) {
   if (parts[1] === 'nearby' && parts[2] === 'ws') return nearbyRoom(request, env);
   if (parts[1] === 'account') return handleAccount(request, env, url, parts, { allowed, isSiteOwner });
   if (parts[1] === 'vault') return handleVault(request, env, url, parts);
+  if (parts[1] === 'oauth') return handleOAuth(request, env, url, parts, { allowed, isSiteOwner });
   if (parts[1] === 'pair' && parts.length === 2 && request.method === 'POST') return pairDevices(request, env);
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);

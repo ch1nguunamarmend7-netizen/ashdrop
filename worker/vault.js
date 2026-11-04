@@ -74,6 +74,11 @@ export class UserDO {
       case 'passkey-remove': return this.passkeyRemove(b);
       case 'passkey-login': return this.passkeyLogin(b);
       case 'prefs': return this.prefs(b);
+      // ----- Google / Apple and the vault PIN -----
+      case 'identity-add': return this.identityAdd(b);
+      case 'identity-login': return this.identityLogin(b);
+      case 'pin-unlock': return this.pinUnlock(b);
+      case 'pin-set': return this.pinSet(b);
       // ----- files -----
       case 'file-new': return this.fileNew(b);
       case 'file-chunk-ok': return this.fileChunkOk(b);
@@ -112,19 +117,25 @@ export class UserDO {
     await this.s.put('sessions', sess);
     return token;
   }
-  checkAuth(u, authKey) { return Promise.all([sha(u.salt + '|' + authKey)]).then(([h]) => safeEqual(h, u.authHash)); }
+  async checkAuth(u, authKey) { return !!u.authHash && typeof authKey === 'string' && safeEqual(await sha(u.salt + '|' + authKey), u.authHash); }
+  async checkPin(u, pinAuth) { return !!u.pin && typeof pinAuth === 'string' && safeEqual(await sha(u.salt + '|' + pinAuth), u.pin.authHash); }
   public(u) {
-    return { uid: u.uid, email: u.email, wrapped: u.wrapped, quota: u.quota, used: u.used, owner: !!u.owner,
+    return { uid: u.uid, email: u.email, wrapped: u.wrapped || null, quota: u.quota, used: u.used, owner: !!u.owner,
+      hasPassword: !!u.authHash, pin: u.pin ? { salt: u.pin.salt } : null,
+      identities: (u.identities || []).map((i) => ({ provider: i.provider, email: i.email })),
       passkeys: (u.passkeys || []).map((p) => ({ id: p.id, name: p.name, created: p.created })), created: u.created };
   }
+  async pinRecord(salt, pin) { return pin ? { salt: pin.salt, authHash: await sha(salt + '|' + pin.auth), share: pin.share, wrapped: pin.wrapped, fails: 0 } : null; }
 
   // ---------- account ----------
   async create(b) {
     if (await this.user()) return json({ error: 'exists' }, 409);
     const salt = rand(16);
     const u = {
-      uid: b.uid, email: b.email, created: Date.now(), salt, authHash: await sha(salt + '|' + b.authKey),
-      wrapped: b.wrapped, recovery: { wrapped: b.recoveryWrapped, authHash: await sha(salt + '|' + b.recoveryAuth) },
+      uid: b.uid, email: b.email, created: Date.now(), salt,
+      authHash: b.authKey ? await sha(salt + '|' + b.authKey) : null, wrapped: b.wrapped || null, // no password for Google/Apple accounts
+      recovery: { wrapped: b.recoveryWrapped, authHash: await sha(salt + '|' + b.recoveryAuth) },
+      pin: await this.pinRecord(salt, b.pin), identities: b.identity ? [b.identity] : [],
       quota: b.quota, used: 0, owner: !!b.owner, passkeys: [],
     };
     await this.s.put('user', u);
@@ -177,22 +188,67 @@ export class UserDO {
       return json({ recoveryWrapped: u.recovery.wrapped });
     }
     if (!safeEqual(await sha(u.salt + '|' + b.recoveryAuth), u.recovery.authHash)) return json({ error: 'wrong' }, 401);
-    u.authHash = await sha(u.salt + '|' + b.newAuthKey); u.wrapped = b.newWrapped;
+    if (b.newAuthKey) { u.authHash = await sha(u.salt + '|' + b.newAuthKey); u.wrapped = b.newWrapped; }
+    if (b.newPin) u.pin = await this.pinRecord(u.salt, b.newPin);
     await this.s.put('user', u);
     await this.s.put('sessions', {});
     return json({ token: await this.newSession(b.label), account: this.public(u) });
   }
 
+  /* ---------- Google / Apple ----------
+     An identity proves who you are, like a password does, but it cannot unlock the vault:
+     after signing in this way the browser still needs a passkey, the vault PIN or the recovery key. */
+  async identityAdd(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    u.identities = (u.identities || []).filter((i) => i.provider !== b.identity.provider);
+    u.identities.push(b.identity);
+    await this.s.put('user', u);
+    return json(this.public(u));
+  }
+  async identityLogin(b) {
+    const u = await this.user();
+    if (!u || !(u.identities || []).some((i) => i.provider === b.provider && i.subHash === b.subHash)) return json({ error: 'wrong' }, 401);
+    return json({ token: await this.newSession(b.label), account: this.public(u) });
+  }
+
+  /* ---------- vault PIN ----------
+     The PIN alone cannot unlock the vault: the vault key is locked with the PIN AND a random "share"
+     that we hand out only after a correct PIN. 10 wrong PINs in a row delete the share, so PIN unlock
+     stops working and the recovery key (or a passkey) is needed. Online guessing gets 10 tries in total. */
+  async pinUnlock(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    if (!u.pin) return json({ error: 'no_pin' }, 404);
+    if (!(await this.checkPin(u, b.pinAuth))) {
+      u.pin.fails = (u.pin.fails || 0) + 1;
+      const left = 10 - u.pin.fails;
+      if (left <= 0) u.pin = null;
+      await this.s.put('user', u);
+      return json({ error: left <= 0 ? 'pin_disabled' : 'wrong_pin', left: Math.max(0, left) }, 401);
+    }
+    if (u.pin.fails) { u.pin.fails = 0; await this.s.put('user', u); }
+    return json({ share: u.pin.share, wrapped: u.pin.wrapped });
+  }
+  async pinSet(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    u.pin = await this.pinRecord(u.salt, b.pin);
+    await this.s.put('user', u);
+    return json(this.public(u));
+  }
+
   async deleteAccount(b) {
     const u = await this.session(b);
     if (!u) return json({ error: 'signed_out' }, 401);
-    if (!(await this.checkAuth(u, b.authKey))) return json({ error: 'wrong' }, 401);
+    // Proven with the password, or for Google/Apple accounts with the vault PIN.
+    if (!(await this.checkAuth(u, b.authKey)) && !(await this.checkPin(u, b.pinAuth))) return json({ error: 'wrong' }, 401);
     const files = await this.s.list({ prefix: 'f:' });
     const keys = [];
     for (const [, f] of files) for (let n = 0; n < f.chunks; n++) keys.push(chunkKey(u.uid, f.id, n));
     for (let i = 0; i < keys.length; i += 1000) await this.env.BLOBS.delete(keys.slice(i, i + 1000));
     await this.s.deleteAll();
-    return json({ ok: true, email: u.email, passkeys: (u.passkeys || []).map((p) => p.id) });
+    return json({ ok: true, email: u.email, passkeys: (u.passkeys || []).map((p) => p.id), identities: (u.identities || []).map((i) => `${i.provider}:${i.subHash}`) });
   }
 
   async prefs(b) {
@@ -362,8 +418,8 @@ export async function handleAccount(request, env, url, parts, { allowed, isSiteO
       if (!(await limited())) return json({ error: 'rate_limited' }, 429);
       const idx = await call(indexStub(env, 'email:' + (await sha(normEmail(b.email)))), 'index-get');
       if (idx.status !== 200 || !isB64(b.recoveryAuth, 43, 43)) return json({ error: 'wrong' }, 401);
-      if (b.step !== 'start' && (!isB64(b.newAuthKey, 43, 43) || !isB64(b.newWrapped, 40, 200))) return json({ error: 'bad_keys' }, 400);
-      const r = await call(userStub(env, idx.data.uid), 'recover', { step: b.step, recoveryAuth: b.recoveryAuth, newAuthKey: b.newAuthKey, newWrapped: b.newWrapped, label });
+      if (b.step !== 'start' && !(isB64(b.newAuthKey, 43, 43) && isB64(b.newWrapped, 40, 200)) && !okPin(b.newPin)) return json({ error: 'bad_keys' }, 400);
+      const r = await call(userStub(env, idx.data.uid), 'recover', { step: b.step, recoveryAuth: b.recoveryAuth, newAuthKey: b.newAuthKey, newWrapped: b.newWrapped, newPin: okPin(b.newPin) ? b.newPin : null, label });
       return json(r.data, r.status);
     }
     case 'invites': { // site owner only: make invite codes
@@ -406,14 +462,24 @@ export async function handleAccount(request, env, url, parts, { allowed, isSiteO
       return json(r.data, r.status);
     }
     case 'delete': {
-      const r = await call(me, 'delete-account', { token: who.token, authKey: b.authKey });
+      const r = await call(me, 'delete-account', { token: who.token, authKey: b.authKey, pinAuth: b.pinAuth });
       if (r.status === 200) {
         await call(indexStub(env, 'email:' + (await sha(r.data.email))), 'index-drop');
         for (const id of r.data.passkeys) await call(indexStub(env, 'cred:' + id), 'index-drop');
+        for (const id of r.data.identities) await call(indexStub(env, 'oidc:' + id), 'index-drop');
       }
       return json({ ok: r.status === 200 }, r.status);
     }
     case 'prefs': { const r = await call(me, 'prefs', { token: who.token, blob: b.blob }); return json(r.data, r.status); }
+    case 'pin/unlock': {
+      if (!(await limited())) return json({ error: 'rate_limited' }, 429);
+      if (!isB64(b.pinAuth, 43, 43)) return json({ error: 'bad_keys' }, 400);
+      const r = await call(me, 'pin-unlock', { token: who.token, pinAuth: b.pinAuth }); return json(r.data, r.status);
+    }
+    case 'pin/set': {
+      if (!okPin(b.pin)) return json({ error: 'bad_keys' }, 400);
+      const r = await call(me, 'pin-set', { token: who.token, pin: b.pin }); return json(r.data, r.status);
+    }
     case 'passkey/register': {
       const v = await verifyRegistration(request, env, url, b);
       if (v.error) return json({ error: v.error }, 400);
@@ -487,6 +553,10 @@ export async function handleVault(request, env, url, parts) {
   }
   return json({ error: 'not_found' }, 404);
 }
+
+// A PIN as the browser sends it: { salt, auth, share, wrapped }, never the PIN itself.
+const okPin = (p) => !!p && isB64(p.salt, 22, 22) && isB64(p.auth, 43, 43) && isB64(p.share, 43, 43) && isB64(p.wrapped, 40, 200);
+export { okPin, call, userStub, indexStub, sha, rand, normEmail, DEFAULT_QUOTA, MAX_QUOTA };
 
 function inviteCode() {
   const A = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
