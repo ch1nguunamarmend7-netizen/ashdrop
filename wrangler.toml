@@ -25,6 +25,16 @@ class_name = "LinkDO"
 tag = "v1"
 new_sqlite_classes = ["LinkDO"]
 
+# One Durable Object per account (sessions, passkeys, encrypted file list) and small index objects
+# (email, passkey, invite code -> account). See worker/vault.js.
+[[durable_objects.bindings]]
+name = "USERS"
+class_name = "UserDO"
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["UserDO"]
+
 # Rate limits (needs Wrangler 4.36+). Counted per IP address, per Cloudflare location.
 # Periods can only be 10 or 60 seconds. namespace_id just has to be unique in your account.
 [[ratelimits]]

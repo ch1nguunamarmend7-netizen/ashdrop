@@ -25,7 +25,15 @@ jobs:
       - name: Which commit does the site say it runs?
         id: live
         run: |
-          commit=$(curl -fsS "$SITE/build.json" | python3 -c 'import sys, json; print(json.load(sys.stdin)["commit"])')
+          code=$(curl -sS -o "$RUNNER_TEMP/live.json" -w '%{http_code}' -A "ashdrop-verify (+https://github.com/${{ github.repository }})" "$SITE/build.json") || true
+          if ! commit=$(python3 -c 'import json; print(json.load(open(__import__("os").environ["RUNNER_TEMP"] + "/live.json"))["commit"])' 2>/dev/null); then
+            echo "::error::Could not read $SITE/build.json (HTTP $code). The first lines of what came back:"
+            head -c 600 "$RUNNER_TEMP/live.json"; echo
+            if grep -qi "challenge\|cf-chl\|just a moment" "$RUNNER_TEMP/live.json"; then
+              echo "::error::Cloudflare showed a bot challenge. Turn off Bot Fight Mode (Security > Bots) so this check can read the site."
+            fi
+            exit 1
+          fi
           echo "Live site reports commit $commit"
           echo "commit=$commit" >> "$GITHUB_OUTPUT"
 

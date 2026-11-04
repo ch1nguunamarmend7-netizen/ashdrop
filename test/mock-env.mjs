@@ -1,5 +1,5 @@
 // In-memory stand-ins for R2 and Durable Objects, for tests and local smoke runs.
-import { LinkDO } from '../worker/index.js';
+import { LinkDO, UserDO } from '../worker/index.js';
 
 export function makeEnv() {
   const blobs = new Map();
@@ -10,7 +10,8 @@ export function makeEnv() {
       const v = blobs.get(k);
       return v ? { size: v.length, body: new Blob([v]).stream(), arrayBuffer: async () => v.buffer.slice(0) } : null;
     },
-    async delete(k) { blobs.delete(k); },
+    async delete(k) { for (const x of [].concat(k)) blobs.delete(x); },
+    async head(k) { const v = blobs.get(k); return v ? { size: v.length } : null; },
   };
   const env = { BLOBS, _waits: [] };
   function state() {
@@ -46,6 +47,16 @@ export function makeEnv() {
       return { fetch: (url, init) => obj.fetch(new Request(url, init)) };
     },
   };
+  const users = new Map();
+  env.USERS = {
+    idFromName: (n) => n,
+    get(id) {
+      if (!users.has(id)) { const st = state(); users.set(id, new UserDO(st, env)); }
+      const obj = users.get(id);
+      return { fetch: (url, init) => obj.fetch(new Request(url, init)) };
+    },
+  };
+  env._users = users;
   env.ASSETS = { fetch: async () => new Response('<!doctype html>index', { headers: { 'content-type': 'text/html' } }) };
   env._blobs = blobs;
   env._objects = objects;

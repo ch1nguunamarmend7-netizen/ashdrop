@@ -94,6 +94,16 @@ function Privacy() {
         An inbox that is not used for 90 days is deleted.
       </P>
 
+      <H>Vault accounts</H>
+      <P>
+        If you create a vault account, we keep your email address (to sign you in), and a scrambled check value made
+        from your password in your browser, never the password itself. Your vault key is stored only in locked form:
+        locked by your password, by your recovery key and by each passkey you add, none of which we have. Files,
+        file names and folders are encrypted in your browser before upload; we see their sizes, how many there are and
+        when they were added. We also keep a list of where you are signed in (the browser type, for your own overview).
+        Deleting your account removes all of this and every stored file right away.
+      </P>
+
       <H>Nearby</H>
       <P>
         While the Nearby screen is open, your browser joins a room for your network. The room is named after a
@@ -152,14 +162,23 @@ function Terms() {
 
       <H>The service</H>
       <P>
-        Ashdrop lets you share text and files through encrypted links that delete themselves. It is free and needs no
-        account. We may change, limit or stop the service at any time, for example to deal with abuse or cost.
+        Ashdrop lets you share text and files through encrypted links that delete themselves. Sharing is free and needs
+        no account. We may change, limit or stop the service at any time, for example to deal with abuse or cost.
       </P>
+
+      <H>Vault accounts</H>
+      <UL>
+        <li>The vault is in an invite-only test. Each account has the storage amount it was created with.</li>
+        <li>Only you can unlock your vault. If you lose both your password and your recovery key, nobody, including us, can get your files back.</li>
+        <li>Keep other copies of anything important. While the vault is in testing we may need to change or end it; if we end it, we will tell you by email at least 30 days before and give you time to download your files.</li>
+        <li>The rules below apply to the vault too. We may close accounts that break them, which deletes their files.</li>
+      </UL>
 
       <H>Your responsibilities</H>
       <UL>
         <li>You are responsible for what you share and who you share it with.</li>
         <li>Anyone who has a link (and its password, if it has one) can open it. Keep links and passwords private.</li>
+        <li>Keep your vault password and recovery key private. Anyone with your email and either of them can open your vault.</li>
         <li>We cannot read, recover or restore anything. Do not use Ashdrop as the only copy of something you need.</li>
       </UL>
 
@@ -309,6 +328,8 @@ function Security() {
         <li>Burn links are deleted from the server in the same step that hands them out, so they can only be opened once.</li>
         <li>A typeable code (4 words) is turned into a lookup value and a key in your browser. The server stores only a hash of the lookup value and the link key locked with the code, so it cannot tell which code belongs to which link, and tries are limited per network.</li>
         <li>Sending to your own devices is end-to-end encrypted too. Paired devices swap public keys using 4 one-time words that never reach us, and each item is encrypted to the receiving device's key. We only see that a device received something.</li>
+        <li>The vault works like a password manager: your password is turned into two keys in your browser. One signs you in; the other unlocks your vault key and never leaves your device. Every file has its own key and is sealed in pieces that cannot be swapped or reordered without being detected.</li>
+        <li>Passkeys can unlock the vault too. The passkey proves who you are with a signature we check, and gives your browser a secret (the WebAuthn PRF extension) that unlocks the vault key. That secret never reaches us.</li>
         <li>Nearby sends files straight between two devices over an encrypted WebRTC connection; nothing is uploaded. Both screens show a 4-digit check code made from the two ends of the connection. If they match, no one, including our server, is relaying it in between.</li>
         <li>Pages load no third-party scripts, ads or analytics, and a strict security policy blocks them, because any script on the page could read the key.</li>
       </UL>
@@ -316,6 +337,7 @@ function Security() {
       <H>What it cannot protect against</H>
       <UL>
         <li><span className="text-fg">Anyone who has the full link can open it.</span> If you send it through email or a chat app, that company stores the link. Add a password and send it a different way.</li>
+        <li><span className="text-fg">If you lose both your password and your recovery key, your vault is gone.</span> That is the price of nobody else being able to open it. Keep the recovery key somewhere safe.</li>
         <li><span className="text-fg">A typeable code is weaker than a full link.</span> 4 words are about 44 bits, against 256 for a link. That is plenty against people guessing online, but someone holding a copy of our stored data and a lot of computing power could eventually try every code. Codes die with their link, and a password closes that gap, so add one for anything very sensitive.</li>
         <li>Once someone opens a secret, it is on their screen. We cannot stop screenshots or copies.</li>
         <li>A phone or computer with malware on it. No website can protect against that.</li>

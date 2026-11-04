@@ -8,6 +8,8 @@ import { generateCode, parseCode, sealCode, openCode, CODE_WORDS } from './lib/c
 import { bundleFiles, unbundleFiles, makeZip, MAX_FILES, MAX_TOTAL, OWNER_MAX_TOTAL } from './lib/bundle.js';
 import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
 import { joinNearby, nearbyIdentity, deviceType } from './lib/nearby.js';
+import * as account from './lib/account.js';
+import * as vault from './lib/vault.js';
 import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
@@ -17,7 +19,8 @@ import { Footer } from './Legal.jsx';
 //   accounts: sign in / sign out (needs an auth service)
 //   recovery: the vault recovery key (needs accounts and server-side vault storage)
 //   vaultFiles: storing files in the vault (needs server-side vault storage; today files only live in the tab)
-export const FEATURES = { pro: false, accounts: false, recovery: false, vaultFiles: false };
+//   cloudVault: the real, server-backed encrypted vault with accounts (invite-only while in beta)
+export const FEATURES = { pro: false, accounts: false, recovery: false, vaultFiles: false, cloudVault: true };
 
 // Saves a file through the browser's normal download flow.
 const browserDownloads = {
@@ -796,6 +799,336 @@ function IncomingModal({ req, onClose }) {
       )}
       {phase === 'error' && <div role="alert" className="mt-4 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2.5">{msg}</div>}
     </Modal>
+  );
+}
+
+/* ---------- accounts and the cloud vault ---------- */
+const fieldCls = 'w-full bg-well border border-line rounded-lg px-3 py-2.5 text-[14px] outline-hidden focus:border-mute';
+
+/* Sign in, create an account (invite only for now), or reset with the recovery key. */
+function AccountGate({ onReady, ownerKey }) {
+  const [mode, setMode] = useState('signin'); // signin | signup | recover
+  const [email, setEmail] = useState('');
+  const [pw, setPw] = useState('');
+  const [pw2, setPw2] = useState('');
+  const [invite, setInvite] = useState('');
+  const [rk, setRk] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [recoveryKey, setRecoveryKey] = useState(null);
+  const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); } catch (e) { setMsg(e.message); } setBusy(false); };
+  const submit = (e) => {
+    e.preventDefault();
+    if (mode === 'signin') return run(async () => { await account.signIn({ email, password: pw }); onReady(); });
+    if (pw.length < 10) return setMsg('Use a password of at least 10 characters. A short sentence works well.');
+    if (pw !== pw2) return setMsg('The two passwords are not the same.');
+    if (mode === 'signup') return run(async () => { const r = await account.signUp({ email, password: pw, invite, ownerKey }); setRecoveryKey(r.recoveryKey); });
+    return run(async () => { await account.recover({ email, recoveryKey: rk, newPassword: pw }); onReady(); });
+  };
+  if (recoveryKey) return <RecoveryKeyCard recoveryKey={recoveryKey} email={email} onDone={onReady} />;
+  const tabs = [['signin', 'Sign in'], ['signup', 'Create account']];
+  return (
+    <div className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7">
+      {mode !== 'recover' && (
+        <div className="grid grid-cols-2 gap-1 p-1 rounded-xl bg-well border border-line mb-5" role="tablist">
+          {tabs.map(([id, label]) => (
+            <button key={id} id={`acct-tab-${id}`} role="tab" aria-selected={mode === id} onClick={() => { setMode(id); setMsg(''); }}
+              className={`rounded-lg py-2 text-[13px] font-semibold transition-colors ${mode === id ? 'fill-on on-fill' : 'text-mute hover:text-fg'}`}>{label}</button>
+          ))}
+        </div>
+      )}
+      {mode === 'recover' && <h2 className="font-display text-xl mb-1">Reset your password</h2>}
+      {mode === 'recover' && <p className="text-[13px] text-mute mb-4">Your recovery key unlocks the vault and lets you choose a new password. Ashdrop cannot do this for you.</p>}
+      <form onSubmit={submit} className="flex flex-col gap-3">
+        <label className="text-[12.5px] text-mute">Email<input id="acct-email" type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} className={fieldCls + ' mt-1 text-fg'} /></label>
+        {mode === 'recover' && <label className="text-[12.5px] text-mute">Recovery key<input id="acct-rk" required value={rk} onChange={(e) => setRk(e.target.value)} placeholder="XXXX-XXXX-…" autoComplete="off" spellCheck={false} className={fieldCls + ' mt-1 font-mono text-fg'} /></label>}
+        <label className="text-[12.5px] text-mute">{mode === 'recover' ? 'New password' : 'Password'}<input id="acct-pw" type="password" required autoComplete={mode === 'signin' ? 'current-password' : 'new-password'} value={pw} onChange={(e) => setPw(e.target.value)} className={fieldCls + ' mt-1 text-fg'} /></label>
+        {mode !== 'signin' && <label className="text-[12.5px] text-mute">Repeat it<input id="acct-pw2" type="password" required autoComplete="new-password" value={pw2} onChange={(e) => setPw2(e.target.value)} className={fieldCls + ' mt-1 text-fg'} /></label>}
+        {mode === 'signup' && !ownerKey && <label className="text-[12.5px] text-mute">Invite code<input id="acct-invite" required value={invite} onChange={(e) => setInvite(e.target.value)} placeholder="XXXX-XXXX-XXXX" autoComplete="off" spellCheck={false} className={fieldCls + ' mt-1 font-mono uppercase text-fg'} /></label>}
+        {mode === 'signup' && <p className="text-[12px] text-mute">Your password never leaves this device, so nobody, including Ashdrop, can reset it. You will get a recovery key in the next step.</p>}
+        {msg && <div role="alert" className="rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2">{msg}</div>}
+        <button id="acct-submit" disabled={busy} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60 flex items-center justify-center gap-2">
+          {busy && <span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />}
+          {busy ? 'Working…' : mode === 'signin' ? 'Sign in' : mode === 'signup' ? 'Create account' : 'Set new password'}
+        </button>
+      </form>
+      <div className="flex flex-wrap justify-between gap-2 mt-4 text-[12.5px]">
+        {mode === 'signin' && account.passkeysSupported() && (
+          <button id="acct-passkey" onClick={() => run(async () => { await account.signInWithPasskey(); onReady(); })} className="text-fg underline underline-offset-2 hover:text-ember">Sign in with a passkey</button>
+        )}
+        {mode === 'signin' && <button onClick={() => { setMode('recover'); setMsg(''); }} className="text-mute hover:text-fg ml-auto">Forgot password?</button>}
+        {mode === 'recover' && <button onClick={() => { setMode('signin'); setMsg(''); }} className="text-mute hover:text-fg">Back to sign in</button>}
+      </div>
+      {mode === 'signup' && !ownerKey && <p className="text-[12px] text-mute mt-4">The vault is invite-only while we test it. <a href="/contact" className="underline underline-offset-2 hover:text-fg">Ask for an invite</a>.</p>}
+    </div>
+  );
+}
+
+function RecoveryKeyCard({ recoveryKey, email, onDone }) {
+  const [ok, setOk] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const save = () => browserDownloads.save({ filename: 'ashdrop-recovery-key.txt', data: new Blob([`Ashdrop recovery key\n\nAccount: ${email}\nRecovery key: ${recoveryKey}\n\nIf you forget your password, this key is the only way back into your vault.\nKeep it somewhere safe and offline. Anyone with this key and your email can open your vault.\n`]) });
+  return (
+    <div id="recovery-card" className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-4">
+      <h2 className="font-display text-xl">Save your recovery key</h2>
+      <p className="text-[13.5px] text-mute">If you forget your password, this key is the only way back into your vault. We cannot reset it for you, and we will not show it again.</p>
+      <div id="recovery-key" className="rounded-xl bg-well border border-line p-4 font-mono text-[14px] text-center select-all">{recoveryKey.split('-').map((g, i) => <React.Fragment key={i}>{i > 0 && <>-<wbr /></>}<span className="whitespace-nowrap">{g}</span></React.Fragment>)}</div>
+      <div className="flex gap-2">
+        <button onClick={save} className="press flex-1 rounded-lg py-2.5 text-[13px] font-semibold border border-line hover:border-mute">Download as a file</button>
+        <button onClick={async () => { try { await navigator.clipboard.writeText(recoveryKey); setCopied(true); } catch {} }} className="press flex-1 rounded-lg py-2.5 text-[13px] font-semibold border border-line hover:border-mute">{copied ? 'Copied' : 'Copy'}</button>
+      </div>
+      <label className="flex items-start gap-2.5 text-[13px]"><input id="recovery-saved" type="checkbox" checked={ok} onChange={(e) => setOk(e.target.checked)} className="mt-0.5 accent-[var(--ember)]" />I saved it somewhere safe, like a password manager or on paper.</label>
+      <button id="recovery-done" disabled={!ok} onClick={onDone} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-50">Open my vault</button>
+    </div>
+  );
+}
+
+function UnlockGate({ email, onReady, onSignOut }) {
+  const [pw, setPw] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+  const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); onReady(); } catch (e) { setMsg(e.message); } setBusy(false); };
+  return (
+    <form onSubmit={(e) => { e.preventDefault(); run(() => account.unlock(pw)); }} className="pop w-full max-w-md mx-auto rounded-2xl border border-line bg-panel p-6 sm:p-7 flex flex-col gap-3">
+      <h2 className="font-display text-xl">Unlock your vault</h2>
+      <p className="text-[13px] text-mute">Signed in as <span className="text-fg">{email}</span>. Your vault locks when you close the tab.</p>
+      <input id="unlock-pw" type="password" autoFocus autoComplete="current-password" placeholder="Password" value={pw} onChange={(e) => setPw(e.target.value)} className={fieldCls} />
+      {msg && <div role="alert" className="text-[13px] text-warn">{msg}</div>}
+      <button id="unlock-submit" disabled={busy || !pw} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Unlocking…' : 'Unlock'}</button>
+      <div className="flex justify-between text-[12.5px]">
+        {account.passkeysSupported() ? <button type="button" onClick={() => run(() => account.signInWithPasskey())} className="text-fg underline underline-offset-2 hover:text-ember">Use a passkey</button> : <span />}
+        <button type="button" onClick={onSignOut} className="text-mute hover:text-fg">Sign out</button>
+      </div>
+    </form>
+  );
+}
+
+/* The vault itself, once unlocked. */
+function CloudVault({ onShare, toast }) {
+  const [state, setState] = useState({ loading: true, files: [], used: 0, quota: 0 });
+  const [prefs, setPrefs] = useState({ folders: [] });
+  const [folder, setFolder] = useState('all');
+  const [q, setQ] = useState('');
+  const [uploads, setUploads] = useState([]); // { name, progress }
+  const [rowBusy, setRowBusy] = useState({});
+  const [confirmDel, setConfirmDel] = useState(null);
+  const [renaming, setRenaming] = useState(null);
+  const [drag, setDrag] = useState(false);
+  const [msg, setMsg] = useState('');
+  const input = useRef(null);
+  const refresh = async () => { try { setState({ loading: false, ...(await vault.listFiles()) }); } catch (e) { setMsg(e.message); setState(s => ({ ...s, loading: false })); } };
+  useEffect(() => { refresh(); vault.loadPrefs().then(p => setPrefs({ folders: [], ...p })).catch(() => {}); }, []);
+  const folders = [...new Set([...(prefs.folders || []), ...state.files.map(f => f.folder).filter(Boolean)])].sort();
+  const shown = state.files.filter(f => (folder === 'all' || f.folder === folder) && f.name.toLowerCase().includes(q.trim().toLowerCase())).sort((a, b) => b.created - a.created);
+  const free = Math.max(0, state.quota - state.used);
+
+  const upload = async (list) => {
+    const arr = [...(list || [])];
+    if (!arr.length) return;
+    const need = arr.reduce((n, f) => n + f.size + 28 * Math.max(1, Math.ceil(f.size / vault.CHUNK)), 0);
+    if (need > free) { setMsg(`Not enough space: that needs ${fmtBytes(need)} and you have ${fmtBytes(free)} left.`); return; }
+    setMsg('');
+    for (const f of arr) {
+      setUploads(u => [...u, { name: f.name, progress: 0 }]);
+      try {
+        const entry = await vault.uploadFile(f, { folder: folder === 'all' ? null : folder, onProgress: (p) => setUploads(u => u.map(x => (x.name === f.name ? { ...x, progress: p } : x))) });
+        setState(s => ({ ...s, files: [entry, ...s.files], used: s.used + entry.size }));
+      } catch (e) { setMsg(`${f.name}: ${e.message}`); }
+      setUploads(u => u.filter(x => x.name !== f.name));
+    }
+  };
+  const busyRow = (id, v) => setRowBusy(b => ({ ...b, [id]: v }));
+  const download = async (f) => {
+    busyRow(f.id, 'Decrypting…');
+    try { await browserDownloads.save({ filename: f.name, data: await vault.downloadFile(f, { onProgress: (p) => busyRow(f.id, `${Math.round(p * 100)}%`) }) }); }
+    catch (e) { setMsg(e.message); }
+    busyRow(f.id, null);
+  };
+  const share = async (f) => {
+    if (f.plainSize > 25 * 1024 * 1024 && !getOwnerKey()) { setMsg(`${f.name} is bigger than 25 MB, the limit for a link. Use Nearby to send it to a device.`); return; }
+    busyRow(f.id, 'Preparing…');
+    try { const blob = await vault.downloadFile(f); onShare(new File([blob], f.name, { type: f.mime || '' })); }
+    catch (e) { setMsg(e.message); busyRow(f.id, null); }
+  };
+  const remove = async (f) => {
+    setConfirmDel(null); busyRow(f.id, 'Deleting…');
+    try { const r = await vault.deleteFile(f); setState(s => ({ ...s, files: s.files.filter(x => x.id !== f.id), used: r.used })); toast(`${f.name} deleted.`); }
+    catch (e) { setMsg(e.message); busyRow(f.id, null); }
+  };
+  const saveRename = async (f, name, toFolder) => {
+    setRenaming(null);
+    try { const nf = await vault.updateFile(f, { name: name.trim() || f.name, folder: toFolder || null }); setState(s => ({ ...s, files: s.files.map(x => (x.id === f.id ? nf : x)) })); }
+    catch (e) { setMsg(e.message); }
+  };
+  const [addingFolder, setAddingFolder] = useState(false);
+  const newFolder = async (raw) => {
+    setAddingFolder(false);
+    const name = String(raw || '').trim().slice(0, 40);
+    if (!name || folders.includes(name)) return;
+    const p = { ...prefs, folders: [...(prefs.folders || []), name] };
+    setPrefs(p); setFolder(name);
+    vault.savePrefs(p).catch(() => {});
+  };
+  const pct = state.quota ? Math.min(100, (state.used / state.quota) * 100) : 0;
+
+  return (
+    <div className="flex flex-col gap-4" id="cloud-vault">
+      <div className="rounded-2xl border border-line bg-panel p-4 flex flex-wrap items-center gap-4">
+        <div className="flex-1 min-w-[200px]">
+          <div className="flex justify-between text-[12.5px] mb-1.5"><span>{fmtBytes(state.used)} used</span><span className="text-mute">{fmtBytes(state.quota)} total</span></div>
+          <div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full rounded-full transition-all duration-500" style={{ width: `${pct}%`, background: pct > 90 ? 'var(--warn)' : 'var(--fg)' }} /></div>
+        </div>
+        <button id="vault-upload" onClick={() => input.current.click()} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary">Add files</button>
+        <input ref={input} id="vault-file" type="file" multiple className="hidden" onChange={(e) => { upload(e.target.files); e.target.value = ''; }} />
+      </div>
+
+      <div onDragOver={(e) => { e.preventDefault(); setDrag(true); }} onDragLeave={() => setDrag(false)} onDrop={(e) => { e.preventDefault(); setDrag(false); upload(e.dataTransfer.files); }}
+        className={`rounded-2xl border ${drag ? 'border-ember bg-[var(--ember-soft)]' : 'border-line bg-panel'} transition-colors`}>
+        <div className="flex flex-wrap items-center gap-2 px-4 py-3 border-b border-line">
+          {['all', ...folders].map(fd => (
+            <button key={fd} onClick={() => setFolder(fd)} className={`rounded-full px-3 py-1 text-[12.5px] font-medium border transition-colors ${folder === fd ? 'bg-fg text-ink border-fg' : 'border-line text-mute hover:text-fg'}`}>{fd === 'all' ? 'All files' : fd}</button>
+          ))}
+          {addingFolder
+            ? <form onSubmit={(e) => { e.preventDefault(); newFolder(e.target.elements.fn.value); }}><input name="fn" autoFocus onBlur={(e) => newFolder(e.target.value)} placeholder="Folder name" aria-label="New folder name" maxLength={40} className="w-36 bg-well border border-line rounded-full px-3 py-1 text-[12.5px] outline-hidden focus:border-mute" /></form>
+            : <button id="vault-new-folder" onClick={() => setAddingFolder(true)} className="rounded-full px-3 py-1 text-[12.5px] text-mute hover:text-fg border border-dashed border-line">New folder</button>}
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search" aria-label="Search files" className="ml-auto w-full sm:w-44 bg-well border border-line rounded-lg px-3 py-1.5 text-[13px] outline-hidden focus:border-mute" />
+        </div>
+        {uploads.map(u => (
+          <div key={u.name} className="px-4 py-3 border-b border-line text-[13px]">
+            <div className="flex justify-between gap-3"><span className="truncate">Encrypting and uploading {u.name}</span><span className="text-mute tabular">{Math.round(u.progress * 100)}%</span></div>
+            <div className="h-1 rounded-full bg-line mt-2 overflow-hidden"><div className="h-full bg-fg" style={{ width: `${u.progress * 100}%` }} /></div>
+          </div>
+        ))}
+        {state.loading ? <div className="px-4 py-10 text-center text-mute text-[13px]">Decrypting your file list…</div>
+          : shown.length === 0 ? <div className="px-4 py-12 text-center text-mute text-[13px]">{state.files.length ? 'Nothing matches.' : 'Your vault is empty. Add files, or drop them here. They are encrypted before they leave this device.'}</div>
+          : (
+            <ul id="vault-list">
+              {shown.map(f => {
+                const ts = TYPE_STYLE[typeOf(f.name, f.mime)];
+                return (
+                  <li key={f.id} className="flex flex-wrap sm:flex-nowrap items-center gap-3 px-4 py-3 border-b border-line last:border-0">
+                    <span className="w-9 h-9 rounded-lg grid place-items-center font-mono text-[10px] font-bold shrink-0" style={{ background: ts.c + '22', color: tint(ts.c), border: `1px solid ${ts.c}55` }} aria-hidden="true">{ts.t}</span>
+                    {renaming === f.id ? (
+                      <form className="flex-1 flex flex-wrap gap-2" onSubmit={(e) => { e.preventDefault(); saveRename(f, e.target.elements.nm.value, e.target.elements.fd.value); }}>
+                        <input name="nm" defaultValue={f.name} autoFocus aria-label="File name" className="flex-1 min-w-[140px] bg-well border border-line rounded-lg px-2.5 py-1.5 text-[13px] outline-hidden focus:border-mute" />
+                        <select name="fd" defaultValue={f.folder || ''} aria-label="Folder" className="bg-well border border-line rounded-lg px-2 py-1.5 text-[13px]"><option value="">No folder</option>{folders.map(x => <option key={x} value={x}>{x}</option>)}</select>
+                        <button className="press rounded-lg px-3 text-[12.5px] font-semibold btn-primary">Save</button>
+                        <button type="button" onClick={() => setRenaming(null)} className="text-[12.5px] text-mute">Cancel</button>
+                      </form>
+                    ) : (
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[13.5px] font-medium truncate">{f.name}</div>
+                        <div className="text-[12px] text-mute">{fmtBytes(f.plainSize ?? f.size)} · {new Date(f.created).toLocaleDateString()}{f.folder ? ` · ${f.folder}` : ''}</div>
+                      </div>
+                    )}
+                    {renaming !== f.id && (
+                      <div className="flex items-center gap-1 shrink-0 ml-auto">
+                        {rowBusy[f.id] ? <span className="text-[12px] text-mute tabular px-2">{rowBusy[f.id]}</span>
+                          : confirmDel === f.id ? (<>
+                              <button onClick={() => remove(f)} className="rounded-md px-2.5 py-1 text-[12px] font-semibold btn-burn">Delete</button>
+                              <button onClick={() => setConfirmDel(null)} className="rounded-md px-2 py-1 text-[12px] text-mute">Keep</button>
+                            </>) : (<>
+                              <button onClick={() => download(f)} className="rounded-md px-2.5 py-1 text-[12px] font-medium border border-line hover:border-mute">Download</button>
+                              <button onClick={() => share(f)} className="rounded-md px-2.5 py-1 text-[12px] font-medium border border-line hover:border-mute" title="Send a copy as a burn link">Share</button>
+                              <button onClick={() => setRenaming(f.id)} className="rounded-md px-2 py-1 text-[12px] text-mute hover:text-fg">Rename</button>
+                              <button onClick={() => setConfirmDel(f.id)} className="rounded-md px-2 py-1 text-[12px] text-mute hover:text-ember">Delete</button>
+                            </>)}
+                      </div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+      </div>
+      {msg && <div role="alert" className="rounded-xl border border-warn/40 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
+      <p className="text-[12px] text-mute">Files, names and folders are encrypted in this browser before upload. Ashdrop stores only encrypted pieces and their sizes. Share sends a copy as a burn link; the original stays here.</p>
+    </div>
+  );
+}
+
+/* The Files side of the Vault tab: sign in, unlock, or the vault. */
+function VaultFiles({ onShare, toast }) {
+  const [, rerender] = useState(0);
+  const s = account.session();
+  const ready = () => rerender(n => n + 1);
+  const ownerKey = getOwnerKey();
+  if (!s) return <AccountGate onReady={ready} ownerKey={ownerKey || undefined} />;
+  if (!account.vaultKeyRaw()) return <UnlockGate email={s.email} onReady={ready} onSignOut={async () => { await account.signOut(); ready(); }} />;
+  return <CloudVault onShare={onShare} toast={toast} />;
+}
+
+/* Settings → Account */
+function AccountSettings({ toast }) {
+  const [info, setInfo] = useState(null);
+  const [phase, setPhase] = useState(null); // 'password' | 'delete'
+  const [a, setA] = useState(''), [b, setB] = useState('');
+  const [msg, setMsg] = useState('');
+  const [busy, setBusy] = useState(false);
+  const s = account.session();
+  const load = () => s && account.me().then(setInfo).catch(() => setInfo(null));
+  useEffect(() => { load(); }, []);
+  if (!s) return <Row title="Not signed in" sub="Accounts are for the encrypted vault. Sharing links works without one."><div className="flex sm:justify-end text-[13px] text-mute">Open Vault → Files to sign in</div></Row>;
+  const run = async (fn) => { setBusy(true); setMsg(''); try { await fn(); } catch (e) { setMsg(e.message); } setBusy(false); };
+  const unlocked = !!account.vaultKeyRaw();
+  return (
+    <>
+      <Row title={s.email} sub={info ? `${fmtBytes(info.used)} of ${fmtBytes(info.quota)} used` : 'Signed in'}>
+        <div className="flex gap-2 sm:justify-end">
+          {unlocked && <button onClick={() => { account.lockVault(); toast('Vault locked on this tab.'); load(); }} className="press rounded-lg px-3 py-2 text-[13px] font-semibold border border-line hover:border-mute">Lock vault</button>}
+          <button id="acct-signout" onClick={async () => { await account.signOut(); location.reload(); }} className="press rounded-lg px-3 py-2 text-[13px] font-semibold border border-line hover:border-mute">Sign out</button>
+        </div>
+      </Row>
+      <Row stack title="Passkeys" sub={account.passkeysSupported() ? 'Unlock your vault with Face ID, a fingerprint or your device PIN instead of your password. Your password still works too.' : 'This browser does not support passkeys.'}>
+        {info?.passkeys?.length > 0 && (
+          <ul id="passkey-list" className="flex flex-col gap-1.5">
+            {info.passkeys.map(p => (
+              <li key={p.id} className="flex items-center gap-3 rounded-lg border border-line px-3 py-2 text-[13px]">
+                <span className="flex-1 truncate">{p.name}</span><span className="text-mute text-[12px]">{new Date(p.created).toLocaleDateString()}</span>
+                <button onClick={() => run(async () => { await account.removePasskey(p.id); load(); })} className="text-[12.5px] text-mute hover:text-ember">Remove</button>
+              </li>
+            ))}
+          </ul>
+        )}
+        {account.passkeysSupported() && <div><button id="passkey-add" disabled={!unlocked || busy} onClick={() => run(async () => { await account.addPasskey(deviceType()); toast('Passkey added. You can unlock with it now.'); load(); })} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary disabled:opacity-50">{unlocked ? 'Add a passkey on this device' : 'Unlock your vault to add a passkey'}</button></div>}
+      </Row>
+      <Row stack title="Password" sub="Changing it signs you out on your other devices.">
+        {phase === 'password' ? (
+          <form onSubmit={(e) => { e.preventDefault(); if (b.length < 10) return setMsg('Use at least 10 characters.'); run(async () => { await account.changePassword({ oldPassword: a, newPassword: b }); setPhase(null); setA(''); setB(''); toast('Password changed.'); }); }} className="flex flex-col sm:flex-row gap-2">
+            <input type="password" placeholder="Current password" autoComplete="current-password" value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
+            <input type="password" placeholder="New password" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} className={fieldCls} />
+            <button disabled={busy} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary shrink-0">Change</button>
+          </form>
+        ) : <div><button disabled={!unlocked} onClick={() => setPhase('password')} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute disabled:opacity-50">{unlocked ? 'Change password' : 'Unlock your vault first'}</button></div>}
+      </Row>
+      <Row stack title="Delete account" sub="Deletes every file in your vault and the account itself, right away. This cannot be undone.">
+        {phase === 'delete' ? (
+          <form onSubmit={(e) => { e.preventDefault(); run(async () => { await account.deleteAccount(a); location.reload(); }); }} className="flex flex-col sm:flex-row gap-2">
+            <input type="password" placeholder="Your password" value={a} onChange={(e) => setA(e.target.value)} className={fieldCls} />
+            <button disabled={busy || !a} className="press rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-burn shrink-0">Delete everything</button>
+          </form>
+        ) : <div><button onClick={() => { setA(''); setPhase('delete'); }} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember">Delete account</button></div>}
+      </Row>
+      {msg && <div role="alert" className="text-[13px] text-warn pb-3">{msg}</div>}
+    </>
+  );
+}
+
+/* Owner access → make invite codes for the vault beta. */
+function InviteMaker() {
+  const [gb, setGb] = useState(5);
+  const [codes, setCodes] = useState([]);
+  const [msg, setMsg] = useState('');
+  const make = async () => { setMsg(''); try { const r = await account.makeInvites(getOwnerKey(), 1, gb); setCodes(c => [...r.codes, ...c]); } catch (e) { setMsg(e.message); } };
+  return (
+    <Row stack title="Vault invites" sub="Each code creates one account. Codes expire after 30 days.">
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-[13px] flex items-center gap-2">Storage <select id="invite-gb" value={gb} onChange={(e) => setGb(Number(e.target.value))} className="bg-well border border-line rounded-lg px-2 py-1.5">{[1, 5, 10, 50, 100].map(n => <option key={n} value={n}>{n} GB</option>)}</select></label>
+        <button id="invite-make" onClick={make} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary">Make an invite code</button>
+      </div>
+      {codes.length > 0 && <ul id="invite-codes" className="flex flex-col gap-1">{codes.map(c => <li key={c} className="font-mono text-[14px] select-all">{c}</li>)}</ul>}
+      {msg && <div role="alert" className="text-[13px] text-warn">{msg}</div>}
+    </Row>
   );
 }
 
@@ -2447,7 +2780,7 @@ function OwnerAccess({ on, onChange }) {
   );
 }
 
-function Settings({ onPair, peersVersion, onPeersChange, ownerOn, onOwnerChange, settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
+function Settings({ toast, onPair, peersVersion, onPeersChange, ownerOn, onOwnerChange, settings, setSettings, plan, onCancelPlan, onUpgrade, signedIn, onSignOut, onSignIn, vaultCount, onWipeVault, effectiveTheme, recoverySaved, onRecovery, onNewRecovery, linkLock, onLinkLockToggle, onChangePasscode }) {
   const [confirm, setConfirm] = useState(null); // 'cancel' | 'wipe' | 'reset'
   const set = (k, v) => setSettings(prev => ({ ...prev, [k]: v }));
   const isPro = plan.tier === 'pro';
@@ -2539,12 +2872,17 @@ function Settings({ onPair, peersVersion, onPeersChange, ownerOn, onOwnerChange,
         )}
       </Section>
 
+      {FEATURES.cloudVault && <Section title="Account" i={4}>
+        <AccountSettings toast={toast} />
+      </Section>}
+
       <Section title="Your devices" i={4}>
         <DevicesSettings onPair={onPair} peersVersion={peersVersion} onChange={onPeersChange} />
       </Section>
 
       <Section title="Owner access" i={4}>
         <OwnerAccess on={ownerOn} onChange={onOwnerChange} />
+        {ownerOn && FEATURES.cloudVault && <InviteMaker />}
       </Section>
 
       {(FEATURES.accounts || FEATURES.recovery) && <Section title="Account" i={4}>
@@ -2710,8 +3048,8 @@ function App() {
   const [folders, setFolders] = useState(savedFolders?.list || []);
   const [folderColors, setFolderColors] = useState(savedFolders?.colors || {});
   useEffect(() => { try { localStorage.setItem('ashdrop.folders.v2', JSON.stringify({ list: folders, colors: folderColors })); } catch {} }, [folders, folderColors]);
-  const [vaultTabState, setVaultTab] = useState('files');
-  const vaultTab = FEATURES.vaultFiles ? vaultTabState : 'links'; // only My links until vault storage exists
+  const [vaultTabState, setVaultTab] = useState(() => (account.session() ? 'files' : 'links'));
+  const vaultTab = FEATURES.vaultFiles || FEATURES.cloudVault ? vaultTabState : 'links';
   // Links you sent, kept on this device only (they include each link's key and owner token).
   // With the passcode lock on they are encrypted at rest and only decrypted in memory after unlocking.
   const [lockOn, setLockOn] = useState(linkStore.hasLock);
@@ -2868,7 +3206,7 @@ function App() {
     finally { setBusy(false); setProgress(null); }
   };
 
-  const NAV = [['share', 'Share'], ['nearby', 'Nearby'], ['vault', FEATURES.vaultFiles ? 'Vault' : 'My links']];
+  const NAV = [['share', 'Share'], ['nearby', 'Nearby'], ['vault', FEATURES.vaultFiles || FEATURES.cloudVault ? 'Vault' : 'My links']];
   const navIdx = NAV.findIndex(([id]) => id === view); // -1 on Settings
   const GEAR = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
   const headings = {
@@ -2929,7 +3267,7 @@ function App() {
               <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">Settings</h1>
               <p className="text-mute text-[14px] mt-2">Saved on this device. Nothing here is sent to Ashdrop.</p>
             </div>
-            <Settings settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme} ownerOn={ownerOn} onOwnerChange={setOwnerOn} onPair={() => setPairOpen(true)} peersVersion={peersVersion} onPeersChange={() => setPeersVersion(v => v + 1)}
+            <Settings toast={toast} settings={settings} setSettings={setSettingsAndDefaults} plan={plan} effectiveTheme={effectiveTheme} ownerOn={ownerOn} onOwnerChange={setOwnerOn} onPair={() => setPairOpen(true)} peersVersion={peersVersion} onPeersChange={() => setPeersVersion(v => v + 1)}
               onCancelPlan={() => { setPlan({ tier: 'free' }); toast('Pro canceled. Billing has stopped.'); }}
               onUpgrade={(gb) => setPro({ gb })}
               signedIn={signedIn} onSignOut={() => { setSignedIn(false); setView('share'); toast('Signed out. Your vault key was cleared from this tab.'); }}
@@ -2950,15 +3288,14 @@ function App() {
           <div key="vault" className="step-fwd">
             <div className="flex flex-wrap items-end justify-between gap-4 mb-6">
               <div>
-                <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">{vaultTab === 'links' ? 'My links' : 'Your encrypted vault'}</h1>
-                <p className="text-mute text-[14px] mt-2">{vaultTab === 'links' ? 'Every link you sent, live. See when it is opened and revoke it early.' : `${FEATURES.pro && plan.tier === 'pro' ? `${plan.gb} GB on Pro.` : '5 GB.'} Files are encrypted in your browser. Vault sync is not built yet, so files stay in this tab until you close it.`}</p>
+                <h1 className="font-display text-[28px] sm:text-[34px] font-bold leading-tight">{vaultTab === 'links' ? 'My links' : 'Vault'}</h1>
+                <p className="text-mute text-[14px] mt-2">{vaultTab === 'links' ? 'Every link you sent, live. See when it is opened and revoke it early.' : 'Files you keep. Encrypted in this browser before upload, so only you can open them.'}</p>
               </div>
-              {FEATURES.vaultFiles && signedIn && <div className="w-full sm:w-64"><Seg id="vault-tab" label="Vault section" value={vaultTab} onChange={setVaultTab}
+              {(FEATURES.cloudVault || (FEATURES.vaultFiles && signedIn)) && <div className="w-full sm:w-64"><Seg id="vault-tab" label="Vault section" value={vaultTab} onChange={setVaultTab}
                 options={[{ v: 'files', label: 'Files' }, { v: 'links', label: linksVisible ? `My links${links.length ? ` · ${links.length}` : ''}` : 'My links (locked)' }]} /></div>}
             </div>
             {vaultTab === 'links' && <InboxPanel items={inbox} onOpen={openInboxItem} onDismiss={dismissInboxItem} />}
-            {signedIn
-              ? (vaultTab === 'links'
+            {(vaultTab === 'links'
                 ? <div key="links" className="step-fwd">{
                     settings.linksLock && !lockOn
                       ? <LinksGate stage="set" onSet={async (p) => { await setPasscode(p); toast('My links is locked with your passcode.'); }} onSkip={() => setSettings(prev => ({ ...prev, linksLock: false }))} />
@@ -2966,18 +3303,7 @@ function App() {
                         ? <LinksGate stage="enter" count={linkStore.sealedCount()} onUnlock={unlockLinks} onForgot={() => { linkStore.forgetAll(); setLockOn(false); setLinks([]); toast('Saved links cleared. Choose a new passcode.'); }} />
                         : <LinksPanel onLock={lockOn ? lockLinks : null} links={links} onRevoke={async (id) => { const l = links.find(x => x.id === id); try { await revokeLink(id, l.ownerToken); setLinksRefresh(n => n + 1); toast('Link revoked. The encrypted data is deleted.'); } catch { toast('Could not revoke that link. Try again.'); } }} refreshKey={linksRefresh} onOpen={(l) => setRecipientOf({ id: l.id, keyStr: l.keyStr })} onNew={() => setView('share')} />
                   }</div>
-                : <div key="files" className="step-back"><Vault files={vaultFiles} setFiles={setVaultFiles} onPro={(gb, reason) => setPro({ gb, reason })} onShare={shareFromVault} cap={cap} plan={plan}
-                    folders={folders} setFolders={setFolders} folderColors={folderColors} setFolderColors={setFolderColors} recoverySaved={recoverySaved} onRecovery={() => setShowRecovery(true)} /></div>)
-              : (
-                <div className="pop rounded-2xl border border-line bg-panel p-8 text-center flex flex-col items-center gap-3">
-                  <span className="w-14 h-14 rounded-2xl grid place-items-center" style={{ background: 'var(--ember)' }} aria-hidden="true">
-                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--ink)" strokeWidth="2.2"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg>
-                  </span>
-                  <div className="font-display text-[22px] font-bold">Your vault is locked</div>
-                  <div className="text-mute text-[13px] max-w-sm">Sign in to unlock it. Your files are decrypted only in this browser, after you sign in.</div>
-                  <button onClick={() => { setSignedIn(true); toast('Signed in. Your vault is unlocked.'); }} className="press mt-1 rounded-lg px-4 py-2.5 text-[13px] font-semibold btn-primary transition">Sign in</button>
-                </div>
-              )}
+                : <div key="files" className="step-back"><VaultFiles toast={toast} onShare={(f) => { setView('share'); setKind('file'); setFile(f); setErr(''); setStep('protect'); setMaxIdx(2); window.scrollTo?.({ top: 0 }); }} /></div>)}
           </div>
         ) : (
           <div key="share" className="fade-in max-w-3xl mx-auto flex flex-col gap-7">
