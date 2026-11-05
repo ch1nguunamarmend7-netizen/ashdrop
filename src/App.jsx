@@ -331,7 +331,7 @@ export function CodePage() {
           </div>
           <div>
             <label htmlFor="code-input" className="sr-only">Code</label>
-            <input id="code-input" autoFocus value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
+            <input id="code-input" autoFocus={FINE_POINTER} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
               placeholder="e.g. tiger orbit lamp river" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false} enterKeyHint="go"
               className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
             <div className="grid grid-cols-4 gap-1.5 mt-3" aria-live="polite">
@@ -590,7 +590,7 @@ export function PairPage({ initialWords = '' }) {
               </div>
               <div>
                 <label htmlFor="pair-input" className="sr-only">Pairing words</label>
-                <input id="pair-input" autoFocus={!initialWords} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
+                <input id="pair-input" autoFocus={!initialWords && FINE_POINTER} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
                   placeholder="four words" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
                   className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
                 <div className="grid grid-cols-4 gap-1.5 mt-3">
@@ -996,7 +996,7 @@ function UnlockGate({ email, onReady, onSignOut }) {
       <h2 className="font-display text-xl">Unlock your vault</h2>
       <p className="text-[13px] text-mute">Signed in as <span className="text-fg">{email}</span>. Your vault locks when you close the tab.</p>
       {!info ? <div className="text-[13px] text-mute py-2">Checking…</div> : (usePw || usePin) ? (<>
-        <input id="unlock-pw" type="password" autoFocus autoComplete={usePw ? 'current-password' : 'off'} placeholder={usePw ? 'Password' : 'Vault PIN'} aria-label={usePw ? 'Password' : 'Vault PIN'} value={secret} onChange={(e) => setSecret(e.target.value)} className={fieldCls} />
+        <input id="unlock-pw" type="password" autoFocus={FINE_POINTER} autoComplete={usePw ? 'current-password' : 'off'} placeholder={usePw ? 'Password' : 'Vault PIN'} aria-label={usePw ? 'Password' : 'Vault PIN'} value={secret} onChange={(e) => setSecret(e.target.value)} className={fieldCls} />
         <button id="unlock-submit" disabled={busy || !secret} className="press rounded-lg py-3 font-semibold btn-primary disabled:opacity-60">{busy ? 'Unlocking…' : 'Unlock'}</button>
       </>) : <p id="unlock-nopin" className="text-[13px] text-warn">PIN unlock is off after too many wrong tries. Use a passkey or your recovery key, then choose a new PIN.</p>}
       {msg && <div role="alert" className="text-[13px] text-warn">{msg}</div>}
@@ -1539,7 +1539,7 @@ export function RecipientPage({ id, keyStr, onExit, standalone }) {
             </div>
             <form key={shakeKey} className={`mt-4 flex gap-2 ${shakeKey ? 'shake' : ''}`} onSubmit={(e) => { e.preventDefault(); if (pw) unlock(); }}>
               <label htmlFor="rec-pw" className="sr-only">Password</label>
-              <input id="rec-pw" type="password" autoFocus value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
+              <input id="rec-pw" type="password" autoFocus={FINE_POINTER} value={pw} onChange={(e) => setPw(e.target.value)} placeholder="Password"
                 className="flex-1 min-w-0 bg-well border border-line rounded-xl px-4 py-3 font-mono text-[14px] outline-hidden focus:border-cyan" autoComplete="off" />
               <button disabled={busy || !pw} className="press rounded-xl px-5 font-semibold btn-primary disabled:opacity-50">{busy ? (dlPct !== null ? `${Math.round(dlPct * 100)}%` : 'Checking…') : 'Unlock'}</button>
             </form>
@@ -2593,12 +2593,12 @@ function PasscodeForm({ mode, needCurrent, onSubmit, submitLabel, idPrefix = 'pc
     <form key={shake} onSubmit={submit} className={`flex flex-col gap-2.5 ${shake ? 'shake' : ''}`}>
       {asksCurrent && <>
         <label htmlFor={`${idPrefix}-current`} className="sr-only">{mode === 'change' ? 'Current passcode' : 'Passcode'}</label>
-        <input id={`${idPrefix}-current`} type="password" autoFocus inputMode="text" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)}
+        <input id={`${idPrefix}-current`} type="password" autoFocus={FINE_POINTER} inputMode="text" autoComplete="current-password" value={cur} onChange={(e) => setCur(e.target.value)}
           placeholder={mode === 'change' ? 'Current passcode' : 'Passcode'} className={field} />
       </>}
       {asksNew && <>
         <label htmlFor={`${idPrefix}-new`} className="sr-only">New passcode</label>
-        <input id={`${idPrefix}-new`} type="password" autoFocus={!asksCurrent} autoComplete="new-password" value={a} onChange={(e) => setA(e.target.value)}
+        <input id={`${idPrefix}-new`} type="password" autoFocus={!asksCurrent && FINE_POINTER} autoComplete="new-password" value={a} onChange={(e) => setA(e.target.value)}
           placeholder={mode === 'change' ? 'New passcode' : 'Choose a passcode'} className={field} />
         <label htmlFor={`${idPrefix}-confirm`} className="sr-only">Repeat passcode</label>
         <input id={`${idPrefix}-confirm`} type="password" autoComplete="new-password" value={b} onChange={(e) => setB(e.target.value)} placeholder="Repeat it" className={field} />
