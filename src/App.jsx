@@ -448,6 +448,32 @@ function SendToDevices({ result, onPair }) {
   );
 }
 
+/* On the Share screen: send straight to a paired device, or pair one. */
+function DeviceRow({ peersVersion, onPair, onSend, sendingTo, disabled }) {
+  const [peers, setPeers] = useState(getPeers);
+  useEffect(() => { setPeers(getPeers()); }, [peersVersion]);
+  if (!peers.length) return (
+    <div id="device-row" className="rounded-2xl border border-dashed border-line px-4 py-3 flex flex-wrap items-center gap-3">
+      <span className="text-mute shrink-0">{DEVICE_ICON}</span>
+      <span className="text-[13px] text-mute flex-1 min-w-[180px]">Pair your phone and this computer once, then send to it with one tap.</span>
+      <button id="pair-home" onClick={onPair} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line hover:border-mute">Pair a device</button>
+    </div>
+  );
+  return (
+    <div id="device-row" className="flex flex-wrap items-center gap-2">
+      <span className="text-[12.5px] text-mute mr-1">Or send straight to</span>
+      {peers.map(p => (
+        <button key={p.inboxId} id={`home-send-${p.inboxId}`} onClick={() => onSend(p)} disabled={disabled}
+          className="press inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium border border-line hover:border-mute disabled:opacity-60">
+          {sendingTo === p.inboxId ? <span className="w-3.5 h-3.5 rounded-full border-2 border-mute border-t-transparent animate-spin" aria-hidden="true" /> : <span className="text-mute">{DEVICE_ICON}</span>}
+          {p.name}
+        </button>
+      ))}
+      <button id="pair-home" onClick={onPair} className="rounded-lg px-2.5 py-2 text-[12.5px] text-mute hover:text-fg" title="Pair another device">+ Pair</button>
+    </div>
+  );
+}
+
 /* Items other devices sent here. */
 function InboxPanel({ items, onOpen, onDismiss }) {
   if (!items.length) return null;
@@ -3235,6 +3261,7 @@ function App() {
   const hasContent = kind === 'file' ? files.length > 0 : !!text.trim();
 
   useEffect(() => { if (!langPicked) setLang(guessFormat(text)); }, [text, langPicked]);
+  useEffect(() => { setErr(e => (e.startsWith('Paste or type') ? '' : e)); }, [text, files.length]); // the "empty" hint goes once there is something
   const shareFromVault = async (item) => {
     try {
       const f = await vaultItemToFile(item);
@@ -3285,7 +3312,9 @@ function App() {
     return () => { window.removeEventListener('paste', onPaste); window.removeEventListener('dragover', onOver); window.removeEventListener('dragleave', onLeave); window.removeEventListener('drop', onDrop); };
   }, [view, result, recipientOf]);
 
-  const create = async () => {
+  const [sendingTo, setSendingTo] = useState(null);
+  const create = async (to = null) => {
+    if (!to?.inboxId) to = null; // called straight from a click: no device
     setErr('');
     if (!hasContent) return setErr('Paste or type something first, or drop files anywhere on the page.');
     if (pwOn && pw.length < 6) return setErr('Use a password of at least 6 characters, or turn the password off.');
@@ -3313,7 +3342,16 @@ function App() {
       const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
       await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
       if (linksVisible) setLinks(prev => [record, ...prev]);
-      setResult({ ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code });
+      const res = { ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code };
+      if (to) {
+        setSendingTo(to.inboxId);
+        try {
+          await sendToPeer(to, { id, keyStr: sealed.keyStr, label, kind, expiry, expiresAt, password: pwOn });
+          toast(`Sent to ${to.name}.${pwOn ? ' Send the password another way.' : ' It opens there with one tap.'}`);
+          startOver();
+        } catch (e) { setResult(res); toast(`Could not reach ${to.name}: ${e.message} Here is the link instead.`); }
+        finally { setSendingTo(null); }
+      } else setResult(res);
     } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
     finally { setBusy(false); setProgress(null); }
   };
@@ -3638,10 +3676,11 @@ function App() {
 
                 {err && <div className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[12.5px] px-3 py-2.5" role="alert">{err}</div>}
 
-                <button id="create" onClick={create} disabled={busy}
+                <button id="create" onClick={() => create()} disabled={busy}
                   className={`press rounded-xl py-3.5 px-5 font-display font-bold text-[17px] transition flex items-center justify-center gap-2 ${hasContent ? 'btn-burn ember-glow hover:brightness-110' : 'bg-panel text-mute border border-line'} ${busy ? 'shimmer' : ''}`}>
                   {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create link'}
                 </button>
+                {!qrOnly && <DeviceRow peersVersion={peersVersion} onPair={() => setPairOpen(true)} onSend={(p) => create(p)} sendingTo={sendingTo} disabled={busy} />}
                 <p className="text-[12.5px] text-mute text-center">
                   <a id="have-code" href="/code" className="text-fg underline underline-offset-2 hover:text-ember">Got a 4-word code?</a>
                   {' · '}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button>
