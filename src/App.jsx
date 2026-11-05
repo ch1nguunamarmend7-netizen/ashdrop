@@ -1263,6 +1263,11 @@ function OutputModal({ result, onClose, onOpenRecipient, onPair }) {
     catch { const r = document.createRange(); r.selectNodeContents(linkRef.current); const s = getSelection(); s.removeAllRanges(); s.addRange(r); setCopied('select'); }
     setTimeout(() => setCopied(false), 2200);
   };
+  // Copy it right away, so the next step is just pasting it. Browsers may refuse; then the button is there.
+  const [auto, setAuto] = useState(false);
+  useEffect(() => { if (!result.qrOnly) navigator.clipboard?.writeText(link).then(() => setAuto(true), () => {}); }, []);
+  const canShare = !result.qrOnly && typeof navigator.share === 'function';
+  const share = () => navigator.share({ title: 'Ashdrop', text: result.password ? 'Encrypted with Ashdrop. I will send you the password separately.' : 'Encrypted with Ashdrop.', url: link }).catch(() => {});
   const exp = EXPIRY.find(e => e.id === result.expiry);
   const [showQr, setShowQr] = useState(!!result.qrOnly);
   const [fullQr, setFullQr] = useState(false);
@@ -1272,6 +1277,7 @@ function OutputModal({ result, onClose, onOpenRecipient, onPair }) {
         <div>
           <div className="label text-ok flex items-center gap-1.5"><span className="check-pop inline-block">✓</span>Sealed in your browser · {result.ms.toFixed(0)} ms</div>
           <h2 id="out-title" className="font-display text-2xl font-bold mt-1">{result.qrOnly ? 'Your secure QR code' : 'Your secure link'}</h2>
+          {auto && <p id="auto-copied" className="text-[13px] text-mute mt-1">Already copied. Paste it into any chat or email.</p>}
         </div>
         <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
       </div>
@@ -1288,9 +1294,10 @@ function OutputModal({ result, onClose, onOpenRecipient, onPair }) {
         </div>
         )}
         {!result.qrOnly && <div className="flex gap-2">
-          <button onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'btn-primary'}`}>
-            {copied === true ? 'Copied to clipboard' : copied === 'select' ? 'Selected · press Ctrl/⌘ + C' : 'Copy link'}
+          <button id="copy-link" onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied ? 'bg-ok text-ink' : 'btn-primary'}`}>
+            {copied === true ? 'Copied to clipboard' : copied === 'select' ? 'Selected · press Ctrl/⌘ + C' : auto ? 'Copied · copy again' : 'Copy link'}
           </button>
+          {canShare && <button id="share-link" onClick={share} className="press shrink-0 rounded-lg px-4 font-semibold border border-line hover:border-mute">Share</button>}
           <button id="show-qr" onClick={() => setShowQr(v => !v)} aria-expanded={showQr} title="Show QR code"
             className={`press shrink-0 rounded-lg px-3 border transition-colors ${showQr ? 'border-cyan text-cyan' : 'border-line text-mute hover:text-fg hover:border-mute'}`}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3M21 14v.01M17 21h4v-4M14 21v-3"/></svg>
@@ -2268,8 +2275,8 @@ function HowContent({ onShare, onVault }) {
       <section style={{ '--i': 3 }}>
         <h2 className="font-display text-[26px] sm:text-[32px] font-bold">Three steps</h2>
         <ol className="mt-5 grid sm:grid-cols-3 gap-3">
-          {[['Pick what to share', 'Paste text or code, or choose a file. Nothing has left your device yet.'],
-            ['Lock it and get a link', 'Your browser encrypts it, uploads the locked bytes and hands you a link with the key on the end.'],
+          {[['Paste or drop it', 'Paste text, or drop files anywhere on the page. Nothing has left your device yet.'],
+            ['Create the link', 'Your browser encrypts it, uploads the locked bytes and copies a link with the key on the end.'],
             ['They open it, it burns', 'Their browser unlocks it. Burn links are deleted from the server the moment they are opened.']].map(([t, d], i) => (
             <li key={t} className="lift rounded-2xl border p-5" style={{ background: 'var(--panel)', borderColor: 'var(--line)' }}>
               <span className="w-8 h-8 rounded-full grid place-items-center text-[13px] font-semibold border border-line text-fg">{i + 1}</span>
@@ -3068,65 +3075,39 @@ const FORMATS = [
 const FORMAT_COLOR = { 'Plain text': '#c9d1dc', Markdown: '#8fb3ff', JSON: '#f5c451', YAML: '#ff8fa3', Bash: '#7ee2a8',
   JavaScript: '#f7df5e', TypeScript: '#5aa9ff', Python: '#6fc3ff', SQL: '#d58bff', Go: '#5cd6e0', Rust: '#ff9a62' };
 const colorOf = (l) => FORMAT_COLOR[l] || 'var(--fg)';
+const FINE_POINTER = (() => { try { return matchMedia('(pointer: fine)').matches; } catch { return false; } })(); // no keyboard pop-up on phones
+/** A careful guess at the format, so nobody has to pick one. When unsure, plain text. */
+function guessFormat(t) {
+  const s = t.trim();
+  if (s.length < 12) return 'Plain text';
+  if (/^[[{]/.test(s)) { try { JSON.parse(s); return 'JSON'; } catch {} }
+  if (/^#!.*\b(ba|z)?sh\b/.test(s) || /^(\$ |sudo |apt |npm |npx |git |curl |cd |export )/m.test(s) && s.split('\n').length < 40) return 'Bash';
+  if (/^\s*(SELECT|INSERT INTO|UPDATE|DELETE FROM|CREATE TABLE|ALTER TABLE)\b/im.test(s)) return 'SQL';
+  if (/^package \w+$/m.test(s) || /^func \w+\(/m.test(s)) return 'Go';
+  if (/\bfn \w+\(|\blet mut\b|\bimpl\b.*\{/.test(s)) return 'Rust';
+  if (/^\s*(def \w+\(|from [\w.]+ import |import \w+$|class \w+(\(.*\))?:$)/m.test(s)) return 'Python';
+  if (/\binterface \w+ \{|:\s*(string|number|boolean)\b/.test(s) && /\b(const|let|function|export)\b/.test(s)) return 'TypeScript';
+  if (/\b(const|let|var) \w+ =|\bfunction\b|=>|console\.log|require\(/.test(s) && /[;{}()]/.test(s)) return 'JavaScript';
+  if (/^(#{1,6} |```|- \[[ x]\] )/m.test(s)) return 'Markdown';
+  return 'Plain text';
+}
 const extOf = (l) => (FORMATS.find(f => f.id === l) || FORMATS[0]).ext;
 
-function Stepper({ labels, idx, maxIdx, onJump }) {
-  return (
-    <ol className="flex items-center gap-2" aria-label="Progress">
-      {labels.map((label, i) => {
-        const done = i < idx, here = i === idx, canJump = i <= maxIdx && !here;
-        return (
-          <li key={label} className={`flex items-center gap-2 min-w-0 ${i < labels.length - 1 ? 'flex-1' : ''}`}>
-            <button onClick={() => canJump && onJump(i)} disabled={!canJump} aria-current={here ? 'step' : undefined}
-              className={`flex items-center gap-2 min-w-0 ${canJump ? 'cursor-pointer hover:text-fg' : 'cursor-default'}`}>
-              <span className={`w-7 h-7 rounded-full grid place-items-center text-[12px] font-mono font-semibold shrink-0 transition-all duration-300
-                ${here ? 'fill-on on-fill' : done ? 'bg-raised text-fg border border-line' : 'bg-panel text-mute border border-line'}`}>
-                <span key={done ? 'd' : 'n'} className={done ? 'check-pop' : ''}>{done ? '✓' : i + 1}</span>
-              </span>
-              <span className={`text-[12.5px] font-medium truncate hidden sm:block ${here ? 'text-fg' : 'text-mute'}`}>{label}</span>
-            </button>
-            {i < labels.length - 1 && (
-              <span className="relative h-0.5 flex-1 min-w-3 rounded-full bg-line overflow-hidden" aria-hidden="true">
-                <span className="absolute inset-0 rounded-full origin-left transition-transform duration-500"
-                  style={{ transform: `scaleX(${done ? 1 : 0})`, background: 'var(--fg)', transitionTimingFunction: 'var(--ease-out)' }} />
-              </span>
-            )}
-          </li>
-        );
-      })}
-    </ol>
-  );
-}
 
-function ChoiceCard({ id, title, sub, examples, icon, onClick, i = 0, t1 = 'var(--ember)', t2 = 'var(--pink)' }) {
-  return (
-    <button id={id} onClick={onClick} style={{ '--i': i, '--t1': t1, '--t2': t2 }}
-      className="group lift press tone-card tone-top text-left rounded-2xl border p-5 sm:p-6 flex flex-col gap-4">
-      <span className="tone-icon w-12 h-12 rounded-xl grid place-items-center group-hover:scale-110 group-hover:-rotate-6 transition-all duration-300" aria-hidden="true">{icon}</span>
-      <span>
-        <span className="block font-display text-[21px] font-bold">{title}</span>
-        <span className="block text-mute text-[13px] mt-1">{sub}</span>
-      </span>
-      <span className="flex flex-wrap gap-1.5">
-        {examples.map(x => <span key={x} className="tone-chip font-mono text-[11px] border rounded-md px-2 py-0.5">{x}</span>)}
-      </span>
-    </button>
-  );
-}
 
 function App() {
   const [view, setView] = useState(() => (/^\/nearby\/?$/.test(location.pathname) ? 'nearby' : /^\/vault\/?$/.test(location.pathname) ? 'vault' : 'share'));
-  const [step, setStep] = useState('type'); // type → (format) → content → protect
-  const [maxIdx, setMaxIdx] = useState(0);
-  const [dir, setDir] = useState('fwd');
-  const [kind, setKind] = useState(null); // 'paste' | 'file'
   const [text, setText] = useState('');
-  const [lang, setLang] = useState('Bash');
+  const [lang, setLang] = useState('Plain text');
+  const [langPicked, setLangPicked] = useState(false); // once chosen by hand, stop guessing
+  const [optsOpen, setOptsOpen] = useState(false);
+  const [dragPage, setDragPage] = useState(false);
   const [files, setFiles] = useState([]);
   const file = files[0] || null;                      // the first (or only) file
   const setFile = (f) => setFiles(f ? [f] : []);      // replace everything with one file
   const filesSize = files.reduce((n, f) => n + f.size, 0);
   const filesLabel = files.length > 1 ? `${files.length} files` : file ? file.name : '';
+  const kind = files.length ? 'file' : 'paste'; // decided by what you put in: files, or else text
   const [drag, setDrag] = useState(false);
   const [settings, setSettings] = useState(loadSettings);
   const [plan, setPlan] = useState({ tier: 'free' });
@@ -3253,18 +3234,11 @@ function App() {
   const bytes = kind === 'file' ? filesSize : enc.encode(text).length;
   const hasContent = kind === 'file' ? files.length > 0 : !!text.trim();
 
-  const flow = kind === 'paste' ? ['type', 'format', 'content', 'protect'] : ['type', 'content', 'protect'];
-  const LABELS = { type: 'Type', format: 'Format', content: kind === 'file' ? 'Files' : kind === 'paste' ? 'Text' : 'Content', protect: 'Protection' };
-  const idx = flow.indexOf(step);
-  const prev = flow[idx - 1];
-  const go = (id, f = flow) => { setErr(''); setDir(f.indexOf(id) >= f.indexOf(step) ? 'fwd' : 'back'); setStep(id); setMaxIdx(m => Math.max(m, f.indexOf(id))); window.scrollTo?.({ top: 0, behavior: 'smooth' }); };
-  const choose = (k) => { setKind(k); setMaxIdx(0); const f = k === 'paste' ? ['type','format','content','protect'] : ['type','content','protect']; go(f[1], f); };
-  const chooseFormat = (l) => { setLang(l); go('content'); };
+  useEffect(() => { if (!langPicked) setLang(guessFormat(text)); }, [text, langPicked]);
   const shareFromVault = async (item) => {
     try {
       const f = await vaultItemToFile(item);
-      setView('share'); setKind('file'); setFile(f); setErr('');
-      setStep('protect'); setMaxIdx(2);
+      setView('share'); setFile(f); setErr('');
       window.scrollTo?.({ top: 0, behavior: 'smooth' });
     } catch (e) { setErr('Could not open that vault file: ' + e.message); }
   };
@@ -3272,7 +3246,7 @@ function App() {
     if (item.size - 16 > SHARE_LIMIT) { setErr(`${item.name} is ${fmtDec(item.size)}. Free links carry up to 25 MB.`); return; }
     try { setFile(await vaultItemToFile(item)); setErr(''); } catch (e) { setErr('Could not open that vault file: ' + e.message); }
   };
-  const startOver = () => { setDir('back'); setStep('type'); setMaxIdx(0); setKind(null); setText(''); setFile(null); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setCodeOn(false); setErr(''); };
+  const startOver = () => { setText(''); setFile(null); setLang('Plain text'); setLangPicked(false); setOptsOpen(false); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setCodeOn(false); setErr(''); };
 
   useEffect(() => { if (!ownerOn && expiry === '7d') setExpiry('24h'); }, [ownerOn, expiry]);
   // Add files to the list. Everything together must stay under the limit (25 MB, or 95 MB for the site owner).
@@ -3290,13 +3264,30 @@ function App() {
   };
   const removeFile = (i) => { setFiles(fs => fs.filter((_, j) => j !== i)); setErr(''); };
 
-  const next = () => {
-    if (!hasContent) return setErr(kind === 'file' ? 'Add at least one file first, or drop some on the box.' : 'The editor is empty. Paste some text or code first.');
-    go('protect');
-  };
+  // Paste or drop anywhere on the Share screen.
+  const addFilesRef = useRef(addFiles); addFilesRef.current = addFiles;
+  useEffect(() => {
+    if (view !== 'share' || result || recipientOf) return;
+    const onPaste = (e) => {
+      const fs = [...(e.clipboardData?.files || [])];
+      if (fs.length) { e.preventDefault(); addFilesRef.current(fs); return; }
+      if (e.target?.closest?.('input, textarea, select, [contenteditable]')) return; // normal paste into a field
+      const t = e.clipboardData?.getData('text');
+      if (!t) return;
+      e.preventDefault(); setText(p => p + t);
+      setTimeout(() => document.getElementById('editor')?.focus(), 0);
+    };
+    const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
+    const onOver = (e) => { if (hasFiles(e)) { e.preventDefault(); setDragPage(true); } };
+    const onLeave = (e) => { if (!e.relatedTarget) setDragPage(false); };
+    const onDrop = (e) => { setDragPage(false); if (e.defaultPrevented || !e.dataTransfer?.files?.length) return; e.preventDefault(); addFilesRef.current(e.dataTransfer.files); };
+    window.addEventListener('paste', onPaste); window.addEventListener('dragover', onOver); window.addEventListener('dragleave', onLeave); window.addEventListener('drop', onDrop);
+    return () => { window.removeEventListener('paste', onPaste); window.removeEventListener('dragover', onOver); window.removeEventListener('dragleave', onLeave); window.removeEventListener('drop', onDrop); };
+  }, [view, result, recipientOf]);
 
   const create = async () => {
     setErr('');
+    if (!hasContent) return setErr('Paste or type something first, or drop files anywhere on the page.');
     if (pwOn && pw.length < 6) return setErr('Use a password of at least 6 characters, or turn the password off.');
     if (!crypto?.subtle) return setErr('This browser does not expose Web Crypto here. Open the page over HTTPS.');
     setBusy(true);
@@ -3330,18 +3321,6 @@ function App() {
   const NAV = [['share', 'Share'], ['nearby', 'Nearby'], ['vault', FEATURES.vaultFiles || FEATURES.cloudVault ? 'Vault' : 'My links']];
   const navIdx = NAV.findIndex(([id]) => id === view); // -1 on Settings
   const GEAR = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>;
-  const headings = {
-    type: ['What would you like to share?', 'Everything is encrypted in this browser tab before it is sent.'],
-    format: ['What kind of text is it?', 'This sets the formatting your recipient sees.'],
-    content: kind === 'file' ? ['Add your files', `As many as you like, up to ${limitLabel} in total. Their names are encrypted too.`] : [lang === 'Plain text' ? 'Paste your text' : `Paste your ${lang}`, 'Nothing leaves this tab until you create the link.'],
-    protect: ['How should it disappear?', 'Choose when the link dies and whether it needs a password.'],
-  };
-  const [title, sub] = headings[step];
-
-  const BackBtn = () => (
-    <button onClick={() => go(prev)} className="rounded-xl px-4 py-3 text-[14px] font-semibold border border-line text-mute hover:text-fg hover:border-mute transition-colors">← Back</button>
-  );
-
   return (
     <div className="min-h-full">
       {/* header */}
@@ -3424,65 +3403,16 @@ function App() {
                         ? <LinksGate stage="enter" count={linkStore.sealedCount()} onUnlock={unlockLinks} onForgot={() => { linkStore.forgetAll(); setLockOn(false); setLinks([]); toast('Saved links cleared. Choose a new passcode.'); }} />
                         : <LinksPanel onLock={lockOn ? lockLinks : null} links={links} onRevoke={async (id) => { const l = links.find(x => x.id === id); try { await revokeLink(id, l.ownerToken); setLinksRefresh(n => n + 1); toast('Link revoked. The encrypted data is deleted.'); } catch { toast('Could not revoke that link. Try again.'); } }} refreshKey={linksRefresh} onOpen={(l) => setRecipientOf({ id: l.id, keyStr: l.keyStr })} onNew={() => setView('share')} />
                   }</div>
-                : <div key="files" className="step-back"><VaultFiles toast={toast} onShare={(f) => { setView('share'); setKind('file'); setFile(f); setErr(''); setStep('protect'); setMaxIdx(2); window.scrollTo?.({ top: 0 }); }} /></div>)}
+                : <div key="files" className="step-back"><VaultFiles toast={toast} onShare={(f) => { setView('share'); setFile(f); setErr(''); window.scrollTo?.({ top: 0 }); }} /></div>)}
           </div>
         ) : (
           <div key="share" className="fade-in max-w-3xl mx-auto flex flex-col gap-7">
-            <Stepper labels={flow.map(id => LABELS[id])} idx={idx} maxIdx={maxIdx} onJump={(i) => go(flow[i])} />
-
-            <div key={step} className={dir === 'back' ? 'step-back' : 'step-fwd'}>
-              <h1 className="font-display text-[28px] sm:text-[36px] leading-[1.1]">{title}</h1>
-              <p className="text-mute text-[14px] mt-2">{sub}</p>
+            <div>
+              <h1 className="font-display text-[28px] sm:text-[36px] leading-[1.1]">Share something that burns</h1>
+              <p className="text-mute text-[14px] mt-2">Paste text or drop files. It is encrypted in this tab before anything is sent.</p>
             </div>
 
-            {/* STEP 1: type */}
-            {step === 'type' && (
-              <div key="s1" className="stagger grid sm:grid-cols-2 gap-4">
-                <ChoiceCard id="choose-paste" title="Text or code" sub="A message, a login, private notes or a code snippet."
-                  examples={['Wi-Fi password', 'a login', 'private notes', 'code']} onClick={() => choose('paste')} i={0}
-                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M8 7l-5 5 5 5M16 7l5 5-5 5M13.5 4l-3 16"/></svg>} />
-                <ChoiceCard id="choose-file" title="Files" sub={`Documents, images, archives. As many as you like, up to ${limitLabel} in total.`}
-                  examples={['.pdf', '.jpg', '.zip', '.docx']} onClick={() => choose('file')} i={1} t1="var(--cyan)" t2="var(--violet)"
-                  icon={<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>} />
-                <a id="have-code" href="/code" style={{ '--i': 2, '--t1': 'var(--gold)', '--t2': 'var(--ok)' }}
-                  className="group lift press tone-card sm:col-span-2 rounded-2xl border px-5 py-4 flex items-center gap-4">
-                  <span className="tone-icon w-10 h-10 rounded-xl grid place-items-center shrink-0" aria-hidden="true">{KEYBOARD_ICON}</span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block font-semibold text-[14.5px]">Got a code?</span>
-                    <span className="block text-mute text-[12.5px]">Someone sent you 4 words instead of a link. Type them here to open it.</span>
-                  </span>
-                </a>
-                <p className="sm:col-span-2 text-[12.5px] text-mute text-center" style={{ '--i': 3 }}>{FEATURES.vaultFiles && <>Want to keep files instead? <button onClick={() => setView('vault')} className="text-fg underline underline-offset-2 hover:text-ember">Open your vault</button> · </>}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button></p>
-              </div>
-            )}
-
-            {/* STEP: format (text only) */}
-            {step === 'format' && (
-              <div key="s-format" className={`${dir === 'back' ? 'step-back' : 'step-fwd'} flex flex-col gap-4`}>
-                <div className="stagger grid grid-cols-2 sm:grid-cols-3 gap-2.5" role="radiogroup" aria-label="Text format">
-                  {FORMATS.map((f, fi) => {
-                    const picked = lang === f.id && maxIdx > 1;
-                    return (
-                      <button key={f.id} id={`fmt-${f.ext.slice(1)}`} role="radio" aria-checked={picked} onClick={() => chooseFormat(f.id)} style={{ '--i': fi }}
-                        className={`lift press text-left rounded-xl border px-3.5 py-3 hover:border-ember hover:bg-[var(--ember-soft)]
-                          ${f.id === 'Plain text' ? 'col-span-2 sm:col-span-3' : ''}
-                          ${picked ? 'border-ember bg-[var(--ember-soft)]' : 'border-line bg-panel'}`}>
-                        <span className="flex items-baseline justify-between gap-2">
-                          <span className="font-semibold text-[14px] flex items-center gap-2"><span className="w-2 h-2 rounded-full" style={{ background: colorOf(f.id) }} aria-hidden="true" />{f.id}</span>
-                          <span className="font-mono text-[11px] text-mute">{f.ext}</span>
-                        </span>
-                        <span className="block text-[12px] text-mute mt-0.5">{f.sub}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="flex"><BackBtn /></div>
-              </div>
-            )}
-
-            {/* STEP 2: content */}
-            {step === 'content' && (
-              <div key="s2" className={`${dir === 'back' ? 'step-back' : 'step-fwd'} flex flex-col gap-4`}>
+            <div className="flex flex-col gap-4">
                 <section className="min-w-0 rounded-2xl overflow-hidden border border-line" aria-label="Content"
                   style={{ background: 'var(--panel)' }}>
                   <div className="flex items-center justify-between gap-3 px-4 py-2.5 border-b border-line">
@@ -3491,7 +3421,14 @@ function App() {
                       <span className="text-mute">{kind === 'paste' ? 'untitled' + extOf(lang) : (filesLabel || 'no files yet')}</span>
                     </span>
                     {kind === 'paste' && (
-                      <button onClick={() => go('format')} className="shrink-0 text-[12px] font-mono rounded-md border border-line px-2 py-1 hover:border-ember transition-colors" style={{ color: tint(colorOf(lang)) }}>{lang} · change</button>
+                      <span className="flex items-center gap-2 shrink-0">
+                        <label htmlFor="format" className="sr-only">Format</label>
+                        <select id="format" value={lang} onChange={(e) => { setLang(e.target.value); setLangPicked(true); }} title="How your recipient sees it"
+                          className="text-[12px] font-mono rounded-md border border-line bg-panel px-1.5 py-1 hover:border-mute outline-hidden" style={{ color: tint(colorOf(lang)) }}>
+                          {FORMATS.map(f => <option key={f.id} value={f.id}>{f.id}</option>)}
+                        </select>
+                        <button id="add-files" onClick={() => fileInput.current.click()} className="press text-[12px] font-semibold rounded-md border border-line px-2.5 py-1 hover:border-mute">Add files</button>
+                      </span>
                     )}
                   </div>
 
@@ -3502,9 +3439,9 @@ function App() {
                         {Array.from({ length: lines }, (_, i) => <div key={i}>{i + 1}</div>)}
                       </div>
                       <label htmlFor="editor" className="sr-only">Text to encrypt</label>
-                      <textarea id="editor" autoFocus spellCheck="false" value={text} onChange={(e) => setText(e.target.value)}
+                      <textarea id="editor" autoFocus={FINE_POINTER} spellCheck="false" value={text} onChange={(e) => setText(e.target.value)}
                         className="editor relative z-10 flex-1 min-w-0 bg-transparent resize-none outline-hidden font-mono text-[12.5px] leading-[1.7] py-4 px-4 text-fg whitespace-pre overflow-x-auto"
-                        style={{ minHeight: `${Math.max(lines, 12) * 1.7 * 12.5 + 32}px` }} />
+                        style={{ minHeight: `${Math.max(lines, 9) * 1.7 * 12.5 + 32}px` }} />
                       {!text && (
                         <div className="absolute inset-0 pointer-events-none grid place-items-center p-6 text-center">
                           <div className="flex flex-col items-center gap-3">
@@ -3514,10 +3451,8 @@ function App() {
                                 <rect x="8" y="3" width="8" height="4" rx="1"/><path d="M16 5h2a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h2"/><path d="M9 14l2 2 4-4"/>
                               </svg>
                             </div>
-                            <div className="font-display text-[20px] font-bold">Drop your {lang === 'Plain text' ? 'text' : lang} here</div>
-                            <div className="text-mute text-[13px] max-w-xs">Click anywhere and start typing, or paste with
-                              <kbd className="mx-1 font-mono text-[11px] text-fg bg-panel border border-line rounded-sm px-1.5 py-0.5">Ctrl</kbd>/<kbd className="mx-1 font-mono text-[11px] text-fg bg-panel border border-line rounded-sm px-1.5 py-0.5">⌘</kbd>+<kbd className="ml-1 font-mono text-[11px] text-fg bg-panel border border-line rounded-sm px-1.5 py-0.5">V</kbd>
-                            </div>
+                            <div className="font-display text-[20px] font-bold">Paste or type here</div>
+                            <div className="text-mute text-[13px] max-w-xs">A password, a message, notes or code. Or drop files anywhere on this page, up to {limitLabel} in total.</div>
                             <div className="flex items-center gap-1.5 text-[11.5px] text-ok mt-1"><span className="w-1.5 h-1.5 rounded-full bg-ok" aria-hidden="true" />Encrypted in this tab before anything is sent</div>
                           </div>
                         </div>
@@ -3542,7 +3477,6 @@ function App() {
                               <div className="font-semibold">Drop files here</div>
                               <div className="text-mute text-[12.5px] mt-1">or click to browse. Pick as many as you like.</div>
                             </div>}
-                        <input ref={fileInput} id="file" type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
                       </div>
                       {files.length > 0 && (
                         <>
@@ -3566,7 +3500,7 @@ function App() {
                           <div>
                             <div className="flex justify-between text-[11.5px] text-mute tabular mb-1.5">
                               <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)} of {limitLabel}</span>
-                              <button onClick={() => setFiles([])} className="hover:text-ember transition-colors">Remove all</button>
+                              <button id="remove-all" onClick={() => setFiles([])} className="hover:text-ember transition-colors">{text.trim() ? 'Remove all, back to text' : 'Remove all'}</button>
                             </div>
                             <div className="h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
                               <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / maxTotal * 100)}%`, background: filesSize / maxTotal > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
@@ -3578,10 +3512,11 @@ function App() {
                   )}
 
                   <div className="flex justify-between px-4 py-2 border-t border-line text-[11.5px] font-mono text-mute tabular">
-                    <span>{kind === 'paste' ? `${lines} lines · ${lang}` : files.length ? 'ready' : 'waiting for files'}</span>
+                    <span>{kind === 'paste' ? `${lines} line${lines === 1 ? '' : 's'} · ${lang}` : `${files.length} file${files.length === 1 ? '' : 's'}`}</span>
                     <span>{bytes.toLocaleString('en-US')} B</span>
                   </div>
                 </section>
+                <input ref={fileInput} id="file" type="file" multiple className="hidden" onChange={(e) => { addFiles(e.target.files); e.target.value = ''; }} />
 
                 {FEATURES.vaultFiles && kind === 'file' && (() => {
                   const own = vaultFiles.filter(v => !v.example);
@@ -3612,28 +3547,14 @@ function App() {
                   );
                 })()}
 
-                {err && <div className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[12.5px] px-3 py-2.5" role="alert">{err}</div>}
-
-                <div className="flex gap-3">
-                  <BackBtn />
-                  <button id="next" onClick={next}
-                    className={`press flex-1 rounded-xl py-3 font-semibold text-[15px] transition-all duration-300 ${hasContent ? 'btn-primary' : 'bg-panel text-mute border border-line'}`}>
-                    Next →
+                <div className="rounded-2xl border border-line bg-panel">
+                  <button id="options-toggle" onClick={() => setOptsOpen(o => !o)} aria-expanded={optsOpen}
+                    className="w-full flex items-center gap-3 px-4 py-3 text-left">
+                    <span className="label shrink-0">Options</span>
+                    <span id="options-summary" className="text-[13px] truncate min-w-0 flex-1">{[(EXPIRY.find(o => o.id === expiry) || EXPIRY[0]).label, pwOn ? 'password' : 'no password', qrOnly && 'QR only', codeOn && '4-word code'].filter(Boolean).join(' · ')}</span>
+                    <span className="text-[12.5px] text-mute shrink-0">{optsOpen ? 'Hide' : 'Change'}</span>
                   </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 3: protection */}
-            {step === 'protect' && (
-              <div key="s3" className={`${dir === 'back' ? 'step-back' : 'step-fwd'} flex flex-col gap-4`}>
-                <div className="rounded-xl border border-line bg-panel px-4 py-3 flex items-center gap-3 min-w-0">
-                  <span className="label shrink-0">Sharing</span>
-                  <span className="font-mono text-[12.5px] truncate min-w-0 flex-1">{kind === 'file' ? filesLabel : `${lines} lines · ${lang}`}</span>
-                  <span className="font-mono text-[12px] text-mute tabular shrink-0">{fmtBytes(bytes)}</span>
-                  <button onClick={() => go('content')} className="text-[12.5px] text-ember hover:underline shrink-0">Edit</button>
-                </div>
-
+                  {optsOpen && <div className="rise flex flex-col gap-4 p-3 pt-0">
                 <div className="tone-top rounded-2xl border border-line bg-panel p-4 sm:p-5" style={{ '--t1': 'var(--ember)', '--t2': 'var(--gold)' }}>
                   <div className="label mb-3">Expiration</div>
                   <div className={`grid gap-2 ${ownerOn ? 'grid-cols-2 sm:grid-cols-4' : 'sm:grid-cols-3'}`} role="radiogroup" aria-label="Expiration">
@@ -3712,16 +3633,24 @@ function App() {
                   )}
                 </div>
 
+                  </div>}
+                </div>
+
                 {err && <div className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[12.5px] px-3 py-2.5" role="alert">{err}</div>}
 
-                <div className="flex gap-3">
-                  <BackBtn />
-                  <button id="create" onClick={create} disabled={busy}
-                    className={`press flex-1 rounded-xl py-3.5 px-5 btn-burn font-display font-bold text-[17px] ember-glow hover:brightness-110 transition disabled:opacity-90 flex items-center justify-center gap-2 ${busy ? 'shimmer' : ''}`}>
-                    {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create Secure Link'}
-                  </button>
-                </div>
-                <p className="text-[11.5px] text-mute text-center">Free · anonymous · no account · lockout included</p>
+                <button id="create" onClick={create} disabled={busy}
+                  className={`press rounded-xl py-3.5 px-5 font-display font-bold text-[17px] transition flex items-center justify-center gap-2 ${hasContent ? 'btn-burn ember-glow hover:brightness-110' : 'bg-panel text-mute border border-line'} ${busy ? 'shimmer' : ''}`}>
+                  {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create link'}
+                </button>
+                <p className="text-[12.5px] text-mute text-center">
+                  <a id="have-code" href="/code" className="text-fg underline underline-offset-2 hover:text-ember">Got a 4-word code?</a>
+                  {' · '}<button onClick={() => setView('how')} className="text-fg underline underline-offset-2 hover:text-ember">How does this work?</button>
+                </p>
+              </div>
+
+            {dragPage && (
+              <div className="fixed inset-0 z-[60] pointer-events-none grid place-items-center bg-ink/70 backdrop-blur-[2px]">
+                <div className="rounded-2xl border-2 border-dashed border-ember px-8 py-6 font-display text-xl">Drop to add files</div>
               </div>
             )}
 
