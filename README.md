@@ -1,12 +1,33 @@
 # Ashdrop
 
-Share secrets that burn after reading. Everything is encrypted in the browser with AES-256-GCM;
-the key travels in the link's `#fragment`, which browsers never send to a server.
+**Send files and secrets that burn after reading.** Encrypted in your browser, so the server never sees what you send or the key to open it. No account, no ads, no trackers.
 
-**Live:** https://ashdrop.cc · **Code:** https://github.com/ch1nguunamarmend7-netizen/ashdrop · **License:** MIT · **Security reports:** see [SECURITY.md](SECURITY.md)
+**Try it:** [ashdrop.cc](https://ashdrop.cc) · **License:** MIT · **Security reports:** [SECURITY.md](SECURITY.md)
 
-Ashdrop is open source so anyone can check that it does what it says. It is new and has not been
-independently audited yet; reviews and reports are very welcome.
+![Paste, create a link, done](docs/media/ashdrop-demo.gif)
+
+## What it does
+
+- **Paste or drop, then Create link.** Text, passwords, code, or up to 25 MB of files. The link is copied for you.
+- **Burns after one view**, or expires after 1 or 24 hours. Add a password, and wrong guesses destroy the link.
+- **Can't scan a QR code?** Get 4 words to type on the other device instead.
+- **Nearby:** send files straight between devices on the same Wi-Fi. Nothing is uploaded and there is no size limit.
+- **Your devices:** pair your phone and computer once, then send to them with one tap.
+- **Vault** (invite-only beta): encrypted file storage you unlock with a password, PIN or passkey.
+
+| Share | The link | On the other phone | Nearby |
+|---|---|---|---|
+| ![Share screen](docs/media/phone-1-home.png) | ![Link with QR code](docs/media/desktop-3-link.png) | ![Opened secret](docs/media/phone-3-opened.png) | ![Nearby](docs/media/phone-4-nearby.png) |
+
+## How the privacy works
+
+Your browser encrypts everything with AES-256-GCM before upload. The key is the part of the link after
+the `#`, which browsers never send to any server, so Ashdrop only ever stores locked bytes it cannot read.
+Burn links are deleted in the same step that hands them out. Read the code: that is why it is open source.
+
+Ashdrop is new and has not been independently audited yet; reviews and reports are very welcome.
+
+## For developers
 
 This repo is one Cloudflare Worker that serves the website **and** the API:
 
