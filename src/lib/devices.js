@@ -16,6 +16,8 @@ import { generateCode } from './code.js';
 
 const DEVICE = 'ashdrop.device';
 const PEERS = 'ashdrop.peers';
+const PENDING = 'ashdrop.pendingPairs'; // words this device showed, kept until the other side's "paired" message arrives
+const PENDING_MS = 7 * 864e5;
 const dec = new TextDecoder();
 const ECDH = { name: 'ECDH', namedCurve: 'P-256' };
 
@@ -83,6 +85,7 @@ async function pairKeys(words) {
   return {
     lookup: b64url(await crypto.subtle.deriveBits(info('ashdrop/v1/pair-lookup'), hk, 256)),
     key: await crypto.subtle.deriveKey(info('ashdrop/v1/pair-card'), hk, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']),
+    proofKey: await crypto.subtle.deriveKey(info('ashdrop/v1/pair-proof'), hk, { name: 'HMAC', hash: 'SHA-256', length: 256 }, false, ['sign', 'verify']),
   };
 }
 
@@ -100,6 +103,11 @@ async function openCard(key, card) {
   return c;
 }
 
+const pending = () => load(PENDING, []).filter((x) => x.until > Date.now());
+const dropPending = (words) => save(PENDING, pending().filter((x) => x.words !== words));
+/** True while this device showed pairing words and has not heard back from the other device yet. */
+export const hasPendingPairing = () => pending().length > 0;
+
 /** Device A: start a pairing. Returns the words to show and wait() which resolves with the new peer. */
 export async function startPairing({ signal } = {}) {
   const d = await registerDevice();
@@ -107,6 +115,8 @@ export async function startPairing({ signal } = {}) {
   const { lookup, key } = await pairKeys(words);
   const first = await postJson('/api/pair', { lookup, role: 'a', card: await sealCard(key, d) });
   if (first.status !== 200) throw new Error(first.status === 429 ? 'Too many tries. Wait a minute.' : 'Could not start pairing.');
+  // Remember the words, so the pairing still completes if this window is closed before the other device joins.
+  save(PENDING, [{ words, until: Date.now() + PENDING_MS }, ...pending()].slice(0, 5));
   const wait = async () => {
     const until = Date.now() + 10 * 60e3;
     while (Date.now() < until) {
@@ -116,6 +126,7 @@ export async function startPairing({ signal } = {}) {
       if (r?.status === 200 && r.data.other) {
         const card = await openCard(key, r.data.other);
         if (card.inboxId === d.inboxId) continue;
+        dropPending(words);
         return addPeer(card);
       }
     }
@@ -135,7 +146,12 @@ export async function joinPairing(words) {
   if (r.status !== 200) throw new Error('Could not pair.');
   const card = await openCard(key, r.data.other);
   if (card.inboxId === d.inboxId) throw new Error('That is this same device.');
-  return addPeer(card);
+  const peer = addPeer(card);
+  // Tell device A too, through its inbox, in case its pairing window is no longer open. The proof shows we knew the words.
+  const { proofKey } = await pairKeys(words);
+  const proof = b64url(await crypto.subtle.sign('HMAC', proofKey, enc.encode('pair:' + d.inboxId)));
+  await dropTo(peer, { type: 'pair', card: { name: d.name, inboxId: d.inboxId, pub: d.pub }, proof }).catch(() => {});
+  return peer;
 }
 
 /* ---------- sending and receiving ---------- */
@@ -148,6 +164,13 @@ async function sharedKey(privJwk, pubJwk, usage) {
 
 /** Send { id, keyStr, label, kind, expiry, expiresAt } to a paired device. */
 export async function sendToPeer(peer, item) {
+  const r = await dropTo(peer, item);
+  if (r.status === 404) throw new Error(`${peer.name} has not been online since pairing.`);
+  if (r.status === 429) throw new Error(r.data.error === 'inbox_full' ? `${peer.name} has too many unopened items.` : 'Too many sends. Wait a minute.');
+  if (r.status !== 202) throw new Error('Could not send.');
+}
+
+async function dropTo(peer, item) {
   const d = await getDevice();
   const eph = await crypto.subtle.generateKey(ECDH, true, ['deriveKey']);
   const ephPriv = await crypto.subtle.exportKey('jwk', eph.privateKey);
@@ -157,10 +180,21 @@ export async function sendToPeer(peer, item) {
   const ct = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(body)));
   const epk = await crypto.subtle.exportKey('jwk', eph.publicKey);
   const msg = b64url(enc.encode(JSON.stringify({ epk: { kty: epk.kty, crv: epk.crv, x: epk.x, y: epk.y }, iv: b64url(iv), ct: b64url(ct) })));
-  const r = await postJson('/api/inbox/drop', { inboxId: peer.inboxId, msg, expiresAt: item.expiresAt });
-  if (r.status === 404) throw new Error(`${peer.name} has not been online since pairing.`);
-  if (r.status === 429) throw new Error(r.data.error === 'inbox_full' ? `${peer.name} has too many unopened items.` : 'Too many sends. Wait a minute.');
-  if (r.status !== 202) throw new Error('Could not send.');
+  return postJson('/api/inbox/drop', { inboxId: peer.inboxId, msg, expiresAt: item.expiresAt });
+}
+
+/* The other device joined while our pairing window was closed. Accept it only with proof it knew our words. */
+async function acceptPair(body, m) {
+  const c = body.card;
+  if (!c || c.inboxId !== body.from || !/^[A-Za-z0-9_-]{22}$/.test(c.inboxId) || c.pub?.kty !== 'EC' || typeof body.proof !== 'string') return null;
+  const known = getPeers().find((p) => p.inboxId === c.inboxId);
+  if (known) return { type: 'paired', msgId: m.id, peer: known, already: true };
+  for (const { words } of pending()) {
+    const { proofKey } = await pairKeys(words);
+    const ok = await crypto.subtle.verify('HMAC', proofKey, b64urlDecode(body.proof), enc.encode('pair:' + c.inboxId)).catch(() => false);
+    if (ok) { dropPending(words); return { type: 'paired', msgId: m.id, peer: addPeer(c) }; }
+  }
+  return null;
 }
 
 /** Decrypt one inbox message. Returns null for anything not from a paired device. */
@@ -170,6 +204,7 @@ export async function openMessage(m) {
     const { epk, iv, ct } = JSON.parse(dec.decode(b64urlDecode(m.msg)));
     const key = await sharedKey(d.priv, epk, 'decrypt');
     const body = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64urlDecode(iv) }, key, b64urlDecode(ct))));
+    if (body.type === 'pair') return await acceptPair(body, m);
     const peer = getPeers().find((p) => p.inboxId === body.from);
     if (!peer || !/^[a-z2-9]{10}$/.test(body.id) || typeof body.keyStr !== 'string') return null;
     return { ...body, msgId: m.id, fromName: peer.name };

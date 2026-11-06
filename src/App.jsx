@@ -10,7 +10,7 @@ import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
 import { joinNearby, nearbyIdentity, deviceType } from './lib/nearby.js';
 import * as account from './lib/account.js';
 import * as vault from './lib/vault.js';
-import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox } from './lib/devices.js';
+import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
 import { Footer } from './Legal.jsx';
 
@@ -3150,12 +3150,21 @@ function App() {
   const [inbox, setInbox] = useState([]);
   const [arrival, setArrival] = useState(null);
   useEffect(() => {
-    if (!getPeers().length) return;
-    return listenInbox((items) => {
+    if (!getPeers().length && !hasPendingPairing()) return;
+    return listenInbox((all) => {
+      // "We're paired" notes from a device that joined while our pairing window was closed.
+      const paired = all.filter(it => it.type === 'paired');
+      if (paired.length) {
+        ackInbox(paired.map(it => it.msgId));
+        const fresh = paired.filter(it => !it.already);
+        if (fresh.length) { toast(`Paired with ${fresh.map(it => it.peer.name).join(', ')}. You can send to it now.`); setPeersVersion(v => v + 1); }
+      }
+      const items = all.filter(it => it.type !== 'paired');
+      if (!items.length) return;
       setInbox(prev => [...prev, ...items.filter(it => !prev.some(p => p.msgId === it.msgId))]);
       setArrival({ item: items[items.length - 1], more: items.length - 1 });
     });
-  }, [peersVersion]);
+  }, [peersVersion, pairOpen]); // re-check after the pairing window closes: a pairing may still be waiting
   const openInboxItem = (it) => { setArrival(null); setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); setRecipientOf({ id: it.id, keyStr: it.keyStr }); };
   const dismissInboxItem = (it) => { setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); };
   const [progress, setProgress] = useState(null); // upload progress 0..1 while a big link is sent
