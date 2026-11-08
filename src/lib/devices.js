@@ -105,6 +105,8 @@ async function openCard(key, card) {
 
 const pending = () => load(PENDING, []).filter((x) => x.until > Date.now());
 const dropPending = (words) => save(PENDING, pending().filter((x) => x.words !== words));
+/** Forget words this device showed (for example, it paired the other way round instead). */
+export const cancelPairing = (words) => dropPending(words);
 /** True while this device showed pairing words and has not heard back from the other device yet. */
 export const hasPendingPairing = () => pending().length > 0;
 

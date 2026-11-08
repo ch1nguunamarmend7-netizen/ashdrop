@@ -10,7 +10,7 @@ import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
 import { joinNearby, nearbyIdentity, deviceType } from './lib/nearby.js';
 import * as account from './lib/account.js';
 import * as vault from './lib/vault.js';
-import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing } from './lib/devices.js';
+import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, cancelPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
 import * as myLinks from './lib/myLinks.js';
 import { Footer } from './Legal.jsx';
@@ -365,11 +365,19 @@ const DEVICE_ICON = <svg width="18" height="18" viewBox="0 0 24 24" fill="none" 
 /* Shown on the device that starts pairing: 4 words and a QR code for the other device. */
 function PairModal({ onClose, onPaired }) {
   const [state, setState] = useState({ phase: 'starting' });
+  const [mode, setMode] = useState('show'); // show: this device shows the words · enter: type the other device's words
+  const ctlRef = useRef(null);
+  const joined = (peer) => { // paired the other way round: stop offering our own words
+    ctlRef.current?.abort();
+    if (state.words) cancelPairing(state.words);
+    setState({ phase: 'done', peer }); onPaired?.(peer);
+  };
   useEffect(() => {
-    const ctl = new AbortController();
+    const ctl = new AbortController(); ctlRef.current = ctl;
     (async () => {
       try {
         const { words, wait } = await startPairing({ signal: ctl.signal });
+        if (ctl.signal.aborted) { cancelPairing(words); return; }
         setState({ phase: 'waiting', words });
         const peer = await wait();
         setState({ phase: 'done', peer });
@@ -387,8 +395,18 @@ function PairModal({ onClose, onPaired }) {
         <h2 id="pair-title" className="font-display text-2xl">Pair a device</h2>
         <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
       </div>
-      {state.phase === 'starting' && <p className="text-mute text-[13.5px] mt-3">Preparing…</p>}
-      {state.phase === 'waiting' && (
+      {state.phase !== 'done' && (
+        <div className="mt-3"><Seg id="pair-mode" label="How to pair" value={mode} onChange={setMode}
+          options={[{ v: 'show', label: 'Show a code' }, { v: 'enter', label: 'Enter a code' }]} /></div>
+      )}
+      {mode === 'enter' && state.phase !== 'done' && (
+        <div id="pair-enter" className="mt-4 flex flex-col gap-3">
+          <p className="text-mute text-[13.5px]">On your other device, open Ashdrop, tap <span className="text-fg font-semibold">Pair a device</span>, and type the 4 words it shows here.</p>
+          <PairJoinForm onJoined={joined} />
+        </div>
+      )}
+      {mode === 'show' && state.phase === 'starting' && <p className="text-mute text-[13.5px] mt-3">Preparing…</p>}
+      {mode === 'show' && state.phase === 'waiting' && (
         <div id="pair-waiting" className="mt-3 flex flex-col gap-4">
           <p className="text-mute text-[13.5px]">On the other device, scan this code with the camera, or open <span className="font-mono text-fg">{location.host}/pair</span> and type the words.</p>
           <div className="flex justify-center"><QR text={url} size={190} /></div>
@@ -406,7 +424,7 @@ function PairModal({ onClose, onPaired }) {
           <button onClick={onClose} className="press mt-1 rounded-lg py-2.5 font-semibold btn-primary">Done</button>
         </div>
       )}
-      {state.phase === 'error' && <div role="alert" className="mt-4 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2.5">{state.msg}</div>}
+      {mode === 'show' && state.phase === 'error' && <div role="alert" className="mt-4 rounded-lg border border-warn/40 bg-warn/10 text-warn text-[13px] px-3 py-2.5">{state.msg}</div>}
     </Modal>
   );
 }
@@ -582,20 +600,45 @@ function DevicesSettings({ onPair, peersVersion, onChange }) {
 }
 
 /* ashdrop.cc/pair: the device that joins. */
-export function PairPage({ initialWords = '' }) {
+/* Type the 4 pairing words shown on the other device. Used on /pair and in the Pair a device window. */
+function PairJoinForm({ initialWords = '', onJoined, autoFocus = true }) {
   const [input, setInput] = useState(initialWords.replace(/-/g, ' '));
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState('');
-  const [peer, setPeer] = useState(null);
   const { words, code } = parseCode(input);
   const slots = Array.from({ length: CODE_WORDS }, (_, i) => words[i] || null);
   const submit = async (e) => {
     e.preventDefault();
     if (!code || busy) return;
     setBusy(true); setMsg('');
-    try { setPeer(await joinPairing(code)); } catch (err) { setMsg(err.message); }
-    setBusy(false);
+    try { onJoined(await joinPairing(code)); } catch (err) { setMsg(err.message); setBusy(false); }
   };
+  return (
+    <form onSubmit={submit} className="flex flex-col gap-4">
+      <div>
+        <label htmlFor="pair-input" className="sr-only">Pairing words</label>
+        <input id="pair-input" autoFocus={autoFocus && !initialWords && FINE_POINTER} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
+          placeholder="four words" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
+          className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
+        <div className="grid grid-cols-4 gap-1.5 mt-3">
+          {slots.map((w, i) => (
+            <span key={i} className={`h-9 rounded-lg border font-mono text-[12.5px] grid place-items-center truncate px-1 ${!w ? 'border-dashed border-line text-mute' : w.word ? 'border-line bg-raised' : 'border-warn/50 text-warn'}`}>
+              {!w ? i + 1 : w.word || `${w.typed}?`}
+            </span>
+          ))}
+        </div>
+      </div>
+      {msg && <div role="alert" className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
+      <button id="pair-join" disabled={!code || busy} className="press rounded-xl py-3.5 font-display text-[16px] btn-primary disabled:opacity-50 flex items-center justify-center gap-2">
+        {busy ? <><span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />Pairing…</> : 'Pair'}
+      </button>
+      <p className="text-[12px] text-mute text-center">The words never leave this device. They encrypt a name card that the two devices swap, so Ashdrop cannot read it or pair itself in between.</p>
+    </form>
+  );
+}
+
+export function PairPage({ initialWords = '' }) {
+  const [peer, setPeer] = useState(null);
   return (
     <div className="min-h-full flex flex-col">
       <div className="relative gutter max-w-6xl w-full mx-auto py-3 flex items-center gap-3 border-b border-line">
@@ -611,30 +654,13 @@ export function PairPage({ initialWords = '' }) {
               <a href="/" className="press mt-2 rounded-xl py-3 text-center font-semibold btn-primary">Open Ashdrop</a>
             </div>
           ) : (
-            <form onSubmit={submit} className="flex flex-col gap-5">
+            <div className="flex flex-col gap-5">
               <div>
                 <h1 className="font-display text-[28px] sm:text-[32px] leading-tight">Pair this device</h1>
-                <p className="text-mute text-[14px] mt-2">{initialWords ? 'Check that these are the words shown on your other device, then pair.' : 'Type the 4 words shown on your other device, under Settings → Pair a device.'}</p>
+                <p className="text-mute text-[14px] mt-2">{initialWords ? 'Check that these are the words shown on your other device, then pair.' : 'Type the 4 words shown on your other device, under Pair a device.'}</p>
               </div>
-              <div>
-                <label htmlFor="pair-input" className="sr-only">Pairing words</label>
-                <input id="pair-input" autoFocus={!initialWords && FINE_POINTER} value={input} onChange={(e) => { setInput(e.target.value); setMsg(''); }}
-                  placeholder="four words" autoComplete="off" autoCapitalize="none" autoCorrect="off" spellCheck={false}
-                  className="w-full bg-well border border-line rounded-xl px-4 py-3.5 font-mono text-[16px] outline-hidden focus:border-mute text-center" />
-                <div className="grid grid-cols-4 gap-1.5 mt-3">
-                  {slots.map((w, i) => (
-                    <span key={i} className={`h-9 rounded-lg border font-mono text-[12.5px] grid place-items-center truncate px-1 ${!w ? 'border-dashed border-line text-mute' : w.word ? 'border-line bg-raised' : 'border-warn/50 text-warn'}`}>
-                      {!w ? i + 1 : w.word || `${w.typed}?`}
-                    </span>
-                  ))}
-                </div>
-              </div>
-              {msg && <div role="alert" className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[13px] px-3.5 py-2.5">{msg}</div>}
-              <button id="pair-join" disabled={!code || busy} className="press rounded-xl py-3.5 font-display text-[16px] btn-primary disabled:opacity-50 flex items-center justify-center gap-2">
-                {busy ? <><span className="w-4 h-4 rounded-full border-2 border-ink border-t-transparent animate-spin" />Pairing…</> : 'Pair'}
-              </button>
-              <p className="text-[12px] text-mute text-center">The words never leave this device. They encrypt a name card that the two devices swap, so Ashdrop cannot read it or pair itself in between.</p>
-            </form>
+              <PairJoinForm initialWords={initialWords} onJoined={setPeer} />
+            </div>
           )}
         </div>
       </main>
