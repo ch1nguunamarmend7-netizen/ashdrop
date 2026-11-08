@@ -71,7 +71,7 @@ export default {
       if (url.pathname.startsWith('/p/')) res.headers.set('Cache-Control', 'no-store');
       if (url.pathname === '/build.json') res.headers.set('Cache-Control', 'no-cache');
       // Secret links and the code page are never meant for search engines (robots.txt says so too).
-      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair') || url.pathname.startsWith('/lab')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
     // Some browsers (Safari) do not count wss:// to the same host as 'self', so name it for live connections.

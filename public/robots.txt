@@ -4,6 +4,7 @@ Disallow: /p/
 Disallow: /api/
 Disallow: /code
 Disallow: /pair
+Disallow: /lab
 Allow: /
 
 Sitemap: https://ashdrop.cc/sitemap.xml

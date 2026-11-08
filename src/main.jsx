@@ -8,6 +8,7 @@ import '@fontsource/martian-mono/500.css';
 import './styles.css';
 import App, { RecipientPage, CodePage, PairPage } from './App.jsx';
 import { LegalPage } from './Legal.jsx';
+import { TouchLab } from './TouchLab.jsx';
 
 // Apply the saved theme before first paint so the recipient page matches too.
 try {
@@ -27,6 +28,8 @@ const legal = location.pathname.match(/^\/(terms|privacy|security|contact)\/?$/)
 
 if (legal) {
   root.render(<LegalPage page={legal[1]} />);
+} else if (/^\/lab\/touch\/?$/.test(location.pathname)) {
+  root.render(<TouchLab />);
 } else if (/^\/code\/?$/.test(location.pathname)) {
   root.render(<CodePage />);
 } else if (/^\/pair\/?$/.test(location.pathname)) {
