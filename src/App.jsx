@@ -12,6 +12,7 @@ import * as account from './lib/account.js';
 import * as vault from './lib/vault.js';
 import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing } from './lib/devices.js';
 import * as linkStore from './lib/linkStore.js';
+import * as myLinks from './lib/myLinks.js';
 import { Footer } from './Legal.jsx';
 
 // Features that are designed but not built on the server yet. Each stays hidden until it is real.
@@ -2646,6 +2647,64 @@ function LockIcon({ open }) {
   );
 }
 
+/* My links when signed in: kept in the vault, opened with it. */
+function AccountLinks({ toast, onOpen, onNew, refresh }) {
+  const [, rerender] = useState(0);
+  const [links, setLinks] = useState(null);
+  const [err, setErr] = useState('');
+  const [refreshKey, setRefreshKey] = useState(0);
+  const [oldLock, setOldLock] = useState(linkStore.hasLock);
+  const s = account.session();
+  const unlocked = !!account.vaultKeyRaw();
+  useEffect(() => {
+    if (!unlocked) return;
+    let alive = true;
+    myLinks.list().then((l) => alive && (setLinks(l), setErr(''))).catch((e) => alive && setErr(e.message));
+    return () => { alive = false; };
+  }, [unlocked, refresh]);
+  if (!unlocked) return (
+    <div className="flex flex-col gap-3">
+      <p className="text-center text-mute text-[13.5px]">Your links are kept in your vault. Unlock it to see them.</p>
+      <UnlockGate email={s.email} onReady={() => rerender(n => n + 1)} onSignOut={async () => { await account.signOut(); rerender(n => n + 1); }} />
+    </div>
+  );
+  const moveOld = async (pass) => {
+    const r = await linkStore.unlock(pass);
+    await myLinks.importRecords(r.records);
+    linkStore.forgetAll(); setOldLock(false);
+    setLinks(await myLinks.list());
+    toast(`${r.records.length} link${r.records.length === 1 ? '' : 's'} moved into your vault. You won't need that passcode again.`);
+  };
+  return (
+    <div className="flex flex-col gap-4">
+      {oldLock && linkStore.sealedCount() > 0 && <OldLinksMove count={linkStore.sealedCount()} onMove={moveOld} onForget={() => { linkStore.forgetAll(); setOldLock(false); }} />}
+      {err ? <div className="rounded-2xl border border-warn/40 text-warn text-[13.5px] p-4">{err} <button onClick={() => { setErr(''); setLinks(null); rerender(n => n + 1); myLinks.list().then(setLinks).catch(e => setErr(e.message)); }} className="underline ml-1">Try again</button></div>
+        : !links ? <div className="text-center text-mute text-[13px] py-12">Opening your links…</div>
+        : <LinksPanel inVault links={links} refreshKey={refreshKey} onOpen={onOpen} onNew={onNew}
+            onRevoke={async (id) => { const l = links.find(x => x.id === id); try { await revokeLink(id, l.ownerToken); setRefreshKey(n => n + 1); toast('Link revoked. The encrypted data is deleted.'); } catch { toast('Could not revoke that link. Try again.'); } }} />}
+    </div>
+  );
+}
+
+/* Links saved on this device under the old My links passcode: move them into the vault once. */
+function OldLinksMove({ count, onMove, onForget }) {
+  const [open, setOpen] = useState(false);
+  if (!open) return (
+    <div className="rounded-2xl border border-line bg-panel p-4 flex flex-wrap items-center gap-3 justify-between">
+      <span className="text-[13.5px]"><span className="font-semibold">{count} older link{count === 1 ? '' : 's'} on this device</span> <span className="text-mute">still use your old My links passcode. Enter it once to move them into your vault.</span></span>
+      <span className="flex gap-2"><button id="old-links-move" onClick={() => setOpen(true)} className="press rounded-lg px-3 py-2 text-[13px] font-semibold btn-primary">Move them</button>
+        <button onClick={onForget} className="press rounded-lg px-3 py-2 text-[13px] font-semibold border border-line hover:border-mute">Forget them</button></span>
+    </div>
+  );
+  return (
+    <div className="rounded-2xl border border-line bg-panel p-5 max-w-md mx-auto w-full flex flex-col gap-3">
+      <div className="font-semibold">Enter your old My links passcode</div>
+      <PasscodeForm mode="enter" idPrefix="old-links" submitLabel="Move into vault" onSubmit={({ current }) => onMove(current)} />
+      <button onClick={() => setOpen(false)} className="text-[12.5px] text-mute hover:text-fg">Not now</button>
+    </div>
+  );
+}
+
 /* What My links shows before it can show the links. */
 function LinksGate({ stage, count, onSet, onUnlock, onSkip, onForgot }) {
   const [forgot, setForgot] = useState(false);
@@ -2704,7 +2763,7 @@ function PasscodeModal({ mode, needCurrent, onSubmit, onClose }) {
   );
 }
 
-function LinksPanel({ links, onRevoke, onOpen, onNew, refreshKey, onLock }) {
+function LinksPanel({ links, onRevoke, onOpen, onNew, refreshKey, onLock, inVault }) {
   const [qrFor, setQrFor] = useState(null);
   const [, setTick] = useState(0);
   const [statuses, setStatuses] = useState({});
@@ -2747,7 +2806,7 @@ function LinksPanel({ links, onRevoke, onOpen, onNew, refreshKey, onLock }) {
             ))}
           </div>
           <div className="flex items-center gap-3">
-            <span className="text-[11.5px] text-mute hidden sm:inline">Labels are kept only on this device. The server sees ids, not content.</span>
+            <span className="text-[11.5px] text-mute hidden sm:inline">{inVault ? 'Encrypted in your vault. The server sees ids, not content.' : 'Labels are kept only on this device. The server sees ids, not content.'}</span>
             {onLock && <button id="lock-now" onClick={onLock} className="press shrink-0 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12.5px] font-semibold border border-line hover:border-cyan hover:text-cyan transition-colors">
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></svg>Lock
             </button>}
@@ -3041,6 +3100,7 @@ function Settings({ toast, onPair, peersVersion, onPeersChange, ownerOn, onOwner
       </Section>}
 
       <Section title="Privacy" i={3}>
+        {account.session() ? <Row title="My links" sub="Kept in your encrypted vault. They open when your vault opens, on any device you sign in on. No separate passcode."><div /></Row> : <>
         <Row title="Require a passcode for My links" sub={linkLock.on
           ? `On. Saved links are encrypted on this device${linkLock.unlocked ? ' and unlocked right now (they lock again after 10 minutes).' : '.'}`
           : settings.linksLock ? 'On, but no passcode is set yet. You will choose one the next time you open My links.' : 'Off. Anyone using this browser can see and open the links you sent.'}>
@@ -3050,7 +3110,7 @@ function Settings({ toast, onPair, peersVersion, onPeersChange, ownerOn, onOwner
           <Row title="Passcode" sub="Change it any time. Your links stay encrypted while you do.">
             <div className="flex sm:justify-end"><button id="change-passcode" onClick={onChangePasscode} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-mute transition-colors">Change passcode</button></div>
           </Row>
-        )}
+        )}</>}
       </Section>
 
       {FEATURES.cloudVault && <Section title="Account" i={4}>
@@ -3220,6 +3280,7 @@ function App() {
   const [unlocked, setUnlocked] = useState(null); // { priv, privJwk } while My links is open
   const [links, setLinks] = useState(() => (linkStore.hasLock() ? [] : linkStore.loadPlain()));
   const [linksRefresh, setLinksRefresh] = useState(0);
+  const [acctLinksTick, setAcctLinksTick] = useState(0);
   const [passModal, setPassModal] = useState(null); // { mode, needCurrent }
   const linksVisible = !lockOn || !!unlocked;
   const lockLinks = () => { setUnlocked(null); setLinks([]); };
@@ -3381,8 +3442,11 @@ function App() {
         const { id, ownerToken, expiresAt } = created;
         const shown = forName ? `${label} → ${forName}`.slice(0, 90) : label;
         const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label: shown, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
-        await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
-        if (linksVisible) setLinks(prev => [record, ...prev]);
+        if (myLinks.active()) { await myLinks.add(record); setAcctLinksTick(n => n + 1); } // in the vault, opens with it
+        else {
+          await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
+          if (linksVisible) setLinks(prev => [record, ...prev]);
+        }
         return { ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code };
       };
       if (!targets.length) { setResult(await makeLink(codeOn)); return; }
@@ -3482,12 +3546,14 @@ function App() {
                 <p className="text-mute text-[14px] mt-2">{vaultTab === 'links' ? 'Every link you sent, live. See when it is opened and revoke it early.' : 'Files you keep. Encrypted in this browser before upload, so only you can open them.'}</p>
               </div>
               {(FEATURES.cloudVault || (FEATURES.vaultFiles && signedIn)) && <div className="w-full sm:w-64"><Seg id="vault-tab" label="Vault section" value={vaultTab} onChange={setVaultTab}
-                options={[{ v: 'files', label: 'Files' }, { v: 'links', label: linksVisible ? `My links${links.length ? ` · ${links.length}` : ''}` : 'My links (locked)' }]} /></div>}
+                options={[{ v: 'files', label: 'Files' }, { v: 'links', label: myLinks.active() ? 'My links' : linksVisible ? `My links${links.length ? ` · ${links.length}` : ''}` : 'My links (locked)' }]} /></div>}
             </div>
             {vaultTab === 'links' && <InboxPanel items={inbox} onOpen={openInboxItem} onDismiss={dismissInboxItem} />}
             {(vaultTab === 'links'
                 ? <div key="links" className="step-fwd">{
-                    settings.linksLock && !lockOn
+                    myLinks.active()
+                      ? <AccountLinks toast={toast} refresh={acctLinksTick} onOpen={(l) => setRecipientOf({ id: l.id, keyStr: l.keyStr })} onNew={() => setView('share')} />
+                    : settings.linksLock && !lockOn
                       ? <LinksGate stage="set" onSet={async (p) => { await setPasscode(p); toast('My links is locked with your passcode.'); }} onSkip={() => setSettings(prev => ({ ...prev, linksLock: false }))} />
                       : lockOn && !unlocked
                         ? <LinksGate stage="enter" count={linkStore.sealedCount()} onUnlock={unlockLinks} onForgot={() => { linkStore.forgetAll(); setLockOn(false); setLinks([]); toast('Saved links cleared. Choose a new passcode.'); }} />

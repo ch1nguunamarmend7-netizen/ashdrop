@@ -8,18 +8,18 @@ import { authHeader, vaultKeyRaw } from './account.js';
 export const CHUNK = 8 * 1024 * 1024;
 const dec = new TextDecoder();
 
-async function vk() {
+export async function vk() {
   const raw = vaultKeyRaw();
   if (!raw) throw Object.assign(new Error('Your vault is locked.'), { code: 'locked' });
   return crypto.subtle.importKey('raw', raw, 'AES-GCM', false, ['encrypt', 'decrypt']);
 }
-async function seal(key, obj) {
+export async function seal(key, obj) {
   const iv = crypto.getRandomValues(new Uint8Array(12));
   const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, enc.encode(JSON.stringify(obj))));
   const out = new Uint8Array(12 + ct.length); out.set(iv); out.set(ct, 12);
   return b64url(out);
 }
-async function open(key, b64) {
+export async function open(key, b64) {
   const b = b64urlDecode(b64);
   return JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(0, 12) }, key, b.slice(12))));
 }

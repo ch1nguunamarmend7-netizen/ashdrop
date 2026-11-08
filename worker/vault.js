@@ -18,6 +18,8 @@ const isB64 = (v, min = 1, max = 4096) => typeof v === 'string' && v.length >= m
 const CHUNK_MAX = 8 * 1024 * 1024 + 64;          // 8 MiB of plaintext per chunk, plus IV and tag
 const SESSION_MS = 30 * 24 * 3600e3;
 const UPLOAD_STALE_MS = 24 * 3600e3;            // unfinished uploads are cleaned up after a day
+const LINKS_MAX = 200;                          // saved links per account
+const LINKS_KEEP_MS = 8 * 864e5;               // the longest a link can live, plus a day
 const DEFAULT_QUOTA = 5 * 1024 ** 3;            // 5 GB
 const MAX_QUOTA = 2 * 1024 ** 4;                // 2 TB
 const enc = new TextEncoder();
@@ -87,6 +89,11 @@ export class UserDO {
       case 'file-get': return this.fileGet(b);
       case 'file-meta': return this.fileMeta(b);
       case 'file-delete': return this.fileDelete(b);
+      // ----- My links, kept in the vault -----
+      case 'links-key': return this.linksKey(b);
+      case 'link-add': return this.linkAdd(b);
+      case 'link-list': return this.linkList(b);
+      case 'link-delete': return this.linkDelete(b);
       default: return json({ error: 'not_found' }, 404);
     }
   }
@@ -316,6 +323,54 @@ export class UserDO {
     await this.s.put('f:' + f.id, f);
     return json({ ok: true });
   }
+  // ---------- My links ----------
+  // Each saved link is sealed in the browser to the account's links public key, so links can be saved
+  // while the vault is locked. The matching private key is stored here sealed with the vault key, so
+  // only an unlocked vault can read them. We see ids, sizes and times, never a link's key or label.
+  async linksKey(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    const cur = (await this.s.get('linksKey')) || null;
+    if (b.set) {
+      if (cur && !b.replace) return json({ key: cur }); // first one wins; two tabs racing get the same key
+      await this.s.put('linksKey', b.set);
+      if (b.replace) await this.dropKeys([...(await this.s.list({ prefix: 'l:' })).keys()]);
+      return json({ key: b.set });
+    }
+    return json({ key: cur });
+  }
+  async linkAdd(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    await this.pruneLinks();
+    const all = await this.s.list({ prefix: 'l:' });
+    if (all.size >= LINKS_MAX) { // drop the oldest
+      const oldest = [...all.values()].sort((x, y) => x.t - y.t).slice(0, all.size - LINKS_MAX + 1);
+      await this.dropKeys(oldest.map((l) => 'l:' + l.id));
+    }
+    await this.s.put('l:' + b.id, { id: b.id, t: Date.now(), blob: b.blob });
+    return json({ ok: true });
+  }
+  async linkList(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    await this.pruneLinks();
+    const all = await this.s.list({ prefix: 'l:' });
+    return json({ links: [...all.values()].sort((x, y) => y.t - x.t) });
+  }
+  async linkDelete(b) {
+    const u = await this.session(b);
+    if (!u) return json({ error: 'signed_out' }, 401);
+    await this.s.delete('l:' + b.id);
+    return json({ ok: true });
+  }
+  async pruneLinks() {
+    const all = await this.s.list({ prefix: 'l:' });
+    const old = [...all.values()].filter((l) => Date.now() - l.t > LINKS_KEEP_MS).map((l) => 'l:' + l.id);
+    await this.dropKeys(old);
+  }
+  async dropKeys(keys) { for (let i = 0; i < keys.length; i += 128) await this.s.delete(keys.slice(i, i + 128)); }
+
   async fileList(b) {
     const u = await this.session(b);
     if (!u) return json({ error: 'signed_out' }, 401);
@@ -505,6 +560,25 @@ export async function handleVault(request, env, url, parts) {
   if (!who) return json({ error: 'signed_out' }, 401);
   const me = userStub(env, who.uid);
   const [, , what, id, n] = parts; // ['api','vault','files', id?, chunk?]
+  if (what === 'links-key') {
+    if (request.method === 'GET') { const r = await call(me, 'links-key', { token: who.token }); return json(r.data, r.status); }
+    if (request.method !== 'POST') return json({ error: 'not_found' }, 404);
+    const b = await request.json().catch(() => ({}));
+    const k = b.key;
+    if (!k || typeof k !== 'object' || !isB64(k.x, 43, 43) || !isB64(k.y, 43, 43) || !isB64(k.priv, 100, 1000)) return json({ error: 'bad_key' }, 400);
+    const r = await call(me, 'links-key', { token: who.token, set: { x: k.x, y: k.y, priv: k.priv }, replace: b.replace === true });
+    return json(r.data, r.status);
+  }
+  if (what === 'links') {
+    if (!id && request.method === 'GET') { const r = await call(me, 'link-list', { token: who.token }); return json(r.data, r.status); }
+    if (!id && request.method === 'POST') {
+      const b = await request.json().catch(() => ({}));
+      if (!/^[A-Za-z0-9_-]{8,32}$/.test(b.id || '') || !isB64(b.blob, 40, 12000)) return json({ error: 'bad_link' }, 400);
+      const r = await call(me, 'link-add', { token: who.token, id: b.id, blob: b.blob }); return json(r.data, r.status);
+    }
+    if (id && request.method === 'DELETE' && /^[A-Za-z0-9_-]{8,32}$/.test(id)) { const r = await call(me, 'link-delete', { token: who.token, id }); return json(r.data, r.status); }
+    return json({ error: 'not_found' }, 404);
+  }
   if (what !== 'files') return json({ error: 'not_found' }, 404);
 
   if (!id && request.method === 'GET') { const r = await call(me, 'file-list', { token: who.token }); return json(r.data, r.status); }

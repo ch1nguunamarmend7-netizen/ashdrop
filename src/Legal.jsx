@@ -121,7 +121,7 @@ function Privacy() {
       <P>Your browser stores a few things locally. They are never sent to us, and you can delete them by clearing this site's data in your browser.</P>
       <UL>
         <li>Your settings, such as theme, animation speed and sharing defaults.</li>
-        <li>My links: the links you sent, including their keys, so you can copy, track and revoke them. With the passcode lock on, this list is encrypted with your passcode.</li>
+        <li>My links: the links you sent, including their keys, so you can copy, track and revoke them. With the passcode lock on, this list is encrypted with your passcode. If you are signed in, the list is kept in your vault instead, encrypted in your browser so only your unlocked vault can read it; we store each entry's id, size and time.</li>
         <li>While you view a link, its key is kept for that tab only, so reloading the page still works.</li>
         <li>If you pair devices: this device's name, its inbox number and keys, and the devices it is paired with.</li>
       </UL>

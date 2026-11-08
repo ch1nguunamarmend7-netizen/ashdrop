@@ -48,7 +48,7 @@ async function sharedKey(priv, pub, usage) {
   return crypto.subtle.deriveKey({ name: 'HKDF', hash: 'SHA-256', salt: new Uint8Array(0), info: enc.encode('ashdrop/v1/links') }, hk, { name: 'AES-GCM', length: 256 }, false, [usage]);
 }
 
-async function sealOne(pubJwk, record) {
+export async function sealOne(pubJwk, record) {
   const pub = await crypto.subtle.importKey('jwk', pubJwk, ECDH, false, []);
   const eph = await crypto.subtle.generateKey(ECDH, true, ['deriveBits']);
   const key = await sharedKey(eph.privateKey, pub, 'encrypt');
@@ -59,7 +59,7 @@ async function sealOne(pubJwk, record) {
   return { t: record.createdAt, epk: b64url(epk), iv: b64url(iv), ct: b64url(ct) };
 }
 
-async function openOne(priv, s) {
+export async function openOne(priv, s) {
   const epk = await crypto.subtle.importKey('raw', b64urlDecode(s.epk), ECDH, false, []);
   const key = await sharedKey(priv, epk, 'decrypt');
   const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64urlDecode(s.iv) }, key, b64urlDecode(s.ct));
