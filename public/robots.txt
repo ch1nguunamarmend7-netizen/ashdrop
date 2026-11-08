@@ -5,3 +5,5 @@ Disallow: /api/
 Disallow: /code
 Disallow: /pair
 Allow: /
+
+Sitemap: https://ashdrop.cc/sitemap.xml

@@ -4,9 +4,10 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="referrer" content="no-referrer" />
-    <meta name="description" content="Share secrets that burn after reading. End-to-end encrypted in your browser." />
+    <meta name="description" content="Send passwords, notes and files through end-to-end encrypted links that burn after reading. Encrypted in your browser, free, no account or app needed." />
     <meta name="color-scheme" content="dark light" />
-    <title>Ashdrop</title>
+    <title>Ashdrop: Share encrypted secrets that burn after reading</title>
+    <link rel="canonical" href="https://ashdrop.cc/" />
     <!-- Link previews. Static on purpose: pages are served byte-for-byte as built so they can be verified. -->
     <meta property="og:site_name" content="Ashdrop" />
     <meta property="og:type" content="website" />
@@ -20,9 +21,67 @@
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="theme-color" content="#0d0f12" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="sitemap" type="application/xml" href="/sitemap.xml" />
+    <!-- Structured data for search engines. A data block, not a script: nothing here runs. -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://ashdrop.cc/#org",
+          "name": "Ashdrop",
+          "url": "https://ashdrop.cc/",
+          "logo": "https://ashdrop.cc/favicon.svg",
+          "email": "helloashdrop.cc@gmail.com",
+          "sameAs": ["https://github.com/ch1nguunamarmend7-netizen/ashdrop", "https://www.youtube.com/watch?v=O2ncmew7iN8"]
+        },
+        {
+          "@type": "WebApplication",
+          "@id": "https://ashdrop.cc/#app",
+          "name": "Ashdrop",
+          "url": "https://ashdrop.cc/",
+          "description": "Share passwords, notes and files through end-to-end encrypted links that burn after reading. Everything is encrypted in the browser before upload.",
+          "applicationCategory": "SecurityApplication",
+          "operatingSystem": "Any (web browser)",
+          "browserRequirements": "A modern web browser with JavaScript",
+          "isAccessibleForFree": true,
+          "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+          "license": "https://opensource.org/licenses/MIT",
+          "publisher": { "@id": "https://ashdrop.cc/#org" }
+        }
+      ]
+    }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Shown until the app loads, and read by search engines and tools that do not run JavaScript. -->
+      <main class="prerender">
+        <h1>Share something that burns</h1>
+        <p class="prerender-lead">Paste text or drop files. Ashdrop encrypts it in your browser and gives you a link that deletes itself after it is read.</p>
+        <h2>Share passwords, notes and files without leaving a copy</h2>
+        <p>Ashdrop turns text or files into a one-time link. Everything is encrypted in your browser with AES-256-GCM before it is uploaded, and the key stays in the part of the link after the #, which browsers never send to a server. When the link is opened, the encrypted data is deleted.</p>
+        <h3>Burn after reading</h3>
+        <p>Links can burn after one view, expire after an hour or a day, or need a password with a limited number of tries.</p>
+        <h3>Encrypted in your browser</h3>
+        <p>The server only stores encrypted bytes. It never sees the key, the text or the file names.</p>
+        <h3>Phone to computer in two taps</h3>
+        <p>Pair your devices once, then send to one or several of them at a time. On the same Wi-Fi, Nearby sends files directly with no size limit.</p>
+        <h3>Free and open source</h3>
+        <p>No account is needed to share. The code is public under the MIT license, and anyone can check that the live site runs it.</p>
+        <h2>Questions</h2>
+        <h3>Can Ashdrop read what I send?</h3>
+        <p>No. Your text and files are encrypted on your device before upload, and the key never reaches our servers.</p>
+        <h3>What happens after a link is opened?</h3>
+        <p>A burn-after-reading link is deleted from the server the moment it is opened. Anyone who opens it afterwards sees that it is gone.</p>
+        <h3>Do I need an account or an app?</h3>
+        <p>No. Ashdrop works in any modern browser on phones and computers. An account is only for the optional encrypted vault.</p>
+        <h3>How big can files be?</h3>
+        <p>Up to 25 MB per link. Nearby, for devices on the same Wi-Fi, has no size limit.</p>
+        <p><a href="/security">How Ashdrop keeps your data safe</a> · <a href="/privacy">Privacy</a> · <a href="https://github.com/ch1nguunamarmend7-netizen/ashdrop">Source code</a></p>
+      </main>
+    </div>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

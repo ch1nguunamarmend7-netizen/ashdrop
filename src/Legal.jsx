@@ -403,6 +403,10 @@ const PAGES = {
 
 export function LegalPage({ page }) {
   const { title, Body } = PAGES[page];
+  useEffect(() => {
+    document.title = `${title} · Ashdrop`;
+    document.querySelector('link[rel=canonical]')?.setAttribute('href', `https://ashdrop.cc/${page}`);
+  }, [title, page]);
   // The page is drawn after the browser looks for #ideas or #abuse, so scroll there ourselves.
   useEffect(() => {
     const id = decodeURIComponent(location.hash.slice(1));

@@ -2647,6 +2647,51 @@ function LockIcon({ open }) {
   );
 }
 
+/* Below the composer on the home page: what Ashdrop is, for people and for search engines.
+   Keep in step with the static copy inside #root in index.html. */
+function HomeInfo({ onHow }) {
+  const features = [
+    ['Burn after reading', 'Links can burn after one view, expire after an hour or a day, or need a password with a limited number of tries.'],
+    ['Encrypted in your browser', 'The server only stores encrypted bytes. It never sees the key, the text or the file names.'],
+    ['Phone to computer in two taps', 'Pair your devices once, then send to one or several of them at a time. On the same Wi-Fi, Nearby sends files directly with no size limit.'],
+    ['Free and open source', 'No account is needed to share. The code is public under the MIT license, and anyone can check that the live site runs it.'],
+  ];
+  const faq = [
+    ['Can Ashdrop read what I send?', 'No. Your text and files are encrypted on your device before upload, and the key never reaches our servers.'],
+    ['What happens after a link is opened?', 'A burn-after-reading link is deleted from the server the moment it is opened. Anyone who opens it afterwards sees that it is gone.'],
+    ['Do I need an account or an app?', 'No. Ashdrop works in any modern browser on phones and computers. An account is only for the optional encrypted vault.'],
+    ['How big can files be?', 'Up to 25 MB per link. Nearby, for devices on the same Wi-Fi, has no size limit.'],
+  ];
+  return (
+    <section id="about" aria-labelledby="about-title" className="mt-14 border-t border-line pt-10 flex flex-col gap-8">
+      <div>
+        <h2 id="about-title" className="font-display text-[22px] sm:text-[26px] font-bold leading-tight">Share passwords, notes and files without leaving a copy</h2>
+        <p className="text-mute text-[14px] mt-2 leading-relaxed">Ashdrop turns text or files into a one-time link. Everything is encrypted in your browser with AES-256-GCM before it is uploaded, and the key stays in the part of the link after the #, which browsers never send to a server. When the link is opened, the encrypted data is deleted.</p>
+      </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        {features.map(([t, d]) => (
+          <div key={t} className="rounded-2xl border border-line bg-panel p-4">
+            <h3 className="font-semibold text-[15px]">{t}</h3>
+            <p className="text-mute text-[13.5px] mt-1 leading-relaxed">{d}</p>
+          </div>
+        ))}
+      </div>
+      <div>
+        <h2 className="font-display text-[20px] font-bold">Questions</h2>
+        <div className="mt-3 flex flex-col divide-y divide-line border-y border-line">
+          {faq.map(([q, a]) => (
+            <details key={q} className="group py-3">
+              <summary className="cursor-pointer list-none flex items-center justify-between gap-3"><h3 className="font-semibold text-[14.5px]">{q}</h3><span aria-hidden="true" className="text-mute group-open:rotate-45 transition-transform text-[18px] leading-none">+</span></summary>
+              <p className="text-mute text-[13.5px] mt-2 leading-relaxed">{a}</p>
+            </details>
+          ))}
+        </div>
+        <p className="text-[12.5px] text-mute mt-4"><button onClick={onHow} className="text-fg underline underline-offset-2 hover:text-ember">How Ashdrop works, step by step</button> · <a href="/security" className="text-fg underline underline-offset-2 hover:text-ember">Security</a></p>
+      </div>
+    </section>
+  );
+}
+
 /* My links when signed in: kept in the vault, opened with it. */
 function AccountLinks({ toast, onOpen, onNew, refresh }) {
   const [, rerender] = useState(0);
@@ -3814,6 +3859,7 @@ function App() {
             <div className="flex items-center justify-center gap-2 text-[12px] text-mute">
               Encrypted in this tab with AES-256-GCM before anything is sent.
             </div>
+            <HomeInfo onHow={() => setView('how')} />
           </div>
         )}
       </main>

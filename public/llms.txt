@@ -1,0 +1,23 @@
+# Ashdrop
+
+> Ashdrop (https://ashdrop.cc) is a free, open-source web app for sharing passwords, notes and files through end-to-end encrypted links that burn after reading. Everything is encrypted in the browser before upload; the server never sees the key or the contents.
+
+## What it does
+
+- Paste text or drop files (up to 25 MB per link) and get a link. The link can burn after one view, expire after an hour or a day, or need a password with a limited number of tries.
+- Encryption: AES-256-GCM in the browser. The key is in the link's fragment (after the #), which browsers never send to a server. When a burn link is opened, the encrypted data is deleted.
+- Pair a phone and a computer once, then send to one or several paired devices in one tap.
+- Nearby: devices on the same Wi-Fi send files directly, encrypted, with no size limit.
+- A 4-word code can open a link on a device without a camera.
+- Optional account with an encrypted vault for files and your sent links (invite-only during the beta). Zero-knowledge: unlocked with a password, PIN or passkey in the browser.
+- No account or app needed to share. Works in any modern browser.
+
+## Pages
+
+- [Home](https://ashdrop.cc/): share text and files
+- [Security](https://ashdrop.cc/security): how the encryption works
+- [Privacy](https://ashdrop.cc/privacy)
+- [Terms](https://ashdrop.cc/terms)
+- [Contact](https://ashdrop.cc/contact)
+- [Source code (MIT)](https://github.com/ch1nguunamarmend7-netizen/ashdrop)
+- [Demo video](https://www.youtube.com/watch?v=O2ncmew7iN8)

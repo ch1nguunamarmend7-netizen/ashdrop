@@ -302,3 +302,12 @@
 :root[data-perf="on"] .grad-text { background: none; color: var(--ember); -webkit-background-clip: border-box; background-clip: border-box; }
 :root[data-perf="on"] .stagger > *, :root[data-perf="on"] .pop, :root[data-perf="on"] .step-fwd, :root[data-perf="on"] .step-back, :root[data-perf="on"] .fade-in { opacity: 1 !important; transform: none !important; }
 }
+
+/* The text inside #root in index.html: shown only until the app loads (and to tools that do not run JavaScript). */
+.prerender { max-width: 44rem; margin: 0 auto; padding: 48px 20px 64px; color: var(--fg, #ece8e2); font-family: 'Instrument Sans', system-ui, sans-serif; line-height: 1.6; }
+.prerender h1 { font-size: 34px; line-height: 1.1; margin: 0 0 10px; }
+.prerender h2 { font-size: 22px; margin: 36px 0 8px; }
+.prerender h3 { font-size: 16px; margin: 20px 0 4px; }
+.prerender p { color: var(--mute, #958f87); font-size: 14.5px; margin: 0 0 8px; }
+.prerender .prerender-lead { font-size: 15px; }
+.prerender a { color: var(--fg, #ece8e2); text-decoration: underline; text-underline-offset: 2px; }
