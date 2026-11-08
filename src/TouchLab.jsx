@@ -7,6 +7,7 @@
 //   Double-tap  two light taps on the back of the phone while it is held still, 0.1 to 0.45 s apart.
 import React, { useEffect, useRef, useState } from 'react';
 import { Logo } from './App.jsx';
+import { watchTouch } from './lib/touch.js';
 
 const BASE = { touch: 2.2, tap: 7.5, back: 2.0 }; // m/s², divided by the sensitivity
 const LABEL = { touch: 'Touch', tap: 'Tap on desk', back: 'Double-tap back' };
@@ -24,6 +25,7 @@ export function TouchLab() {
   const [log, setLog] = useState([]);
   const [rate, setRate] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [would, setWould] = useState(0); // what the real Touch to send would have done
   const [testing, setTesting] = useState('touch'); // which gesture you are trying right now, so the log can be read back
   const testingRef = useRef('touch'); testingRef.current = testing;
   const canvas = useRef(null);
@@ -101,6 +103,7 @@ export function TouchLab() {
       if (t - t0 > 1000) { setRate(Math.round((n * 1000) / (t - t0))); n = 0; t0 = t; }
     };
     window.addEventListener('devicemotion', onMotion);
+    const stopReal = watchTouch(() => { setWould((n) => n + 1); setLog((l) => [{ kind: 'would send', peak: '', before: '', test: testingRef.current, sens: 1, at: new Date().toLocaleTimeString() }, ...l].slice(0, 80)); });
     const noData = setTimeout(() => { if (!got) setState('unsupported'); }, 2500);
     // live graph
     let raf;
@@ -122,13 +125,13 @@ export function TouchLab() {
       raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
-    return () => { window.removeEventListener('devicemotion', onMotion); cancelAnimationFrame(raf); clearTimeout(noData); };
+    return () => { stopReal(); window.removeEventListener('devicemotion', onMotion); cancelAnimationFrame(raf); clearTimeout(noData); };
   }, [state]);
 
   const report = () => [
     `Ashdrop touch test · ${navigator.userAgent}`,
     `samples/s: ${rate} · sensitivity: ${sens}`,
-    `counts: touch ${counts.touch}, tap ${counts.tap}, double-tap ${counts.back}`,
+    `counts: touch ${counts.touch}, tap ${counts.tap}, double-tap ${counts.back} · real rule would send: ${would}`,
     ...log.map((l) => `${l.at} trying=${l.test} got=${l.kind} peak=${l.peak}${l.gap ? ` gap=${l.gap}ms` : ''} before=${l.before} after=${l.after} axis=${l.ax} sens=${l.sens}`),
   ].join('\n');
   const copy = async () => { try { await navigator.clipboard.writeText(report()); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
@@ -157,6 +160,7 @@ export function TouchLab() {
               </div>
             ))}
           </div>
+          <div id="lab-would" className="rounded-2xl border border-ember/50 bg-ember/10 px-4 py-3 flex items-center justify-between text-[13.5px]"><span><span className="font-semibold">Touch to send would have sent:</span> <span className="text-mute">the real, tuned rule</span></span><span className="font-display text-[22px] font-bold">{would}</span></div>
           <div className="rounded-2xl border border-line bg-panel p-3">
             <canvas ref={canvas} className="w-full h-40 block" aria-label="Live motion graph" />
             <div className="flex justify-between text-[11.5px] text-mute mt-2"><span>Live movement · last 3 s</span><span>{rate} samples/s</span></div>
@@ -178,7 +182,7 @@ export function TouchLab() {
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between"><span className="label">What it felt</span><button onClick={copy} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line">{copied ? 'Copied' : 'Copy results'}</button></div>
             <ul className="text-[12px] font-mono text-mute flex flex-col gap-0.5 max-h-56 overflow-auto">
-              {log.length ? log.map((l, i) => <li key={i} className={l.kind === 'ignored' ? 'opacity-60' : 'text-fg'}>{l.at} · trying {l.test === 'none' ? 'nothing' : LABEL[l.test]?.toLowerCase()} → {l.kind === 'ignored' ? 'ignored' : LABEL[l.kind]} · peak {l.peak}{l.gap ? ` · ${l.gap} ms apart` : ''} · moving before {l.before}</li>) : <li>Nothing yet. Try a gesture.</li>}
+              {log.length ? log.map((l, i) => <li key={i} className={l.kind === 'ignored' ? 'opacity-60' : 'text-fg'}>{l.at} · trying {l.test === 'none' ? 'nothing' : LABEL[l.test]?.toLowerCase()} → {l.kind === 'ignored' ? 'ignored' : l.kind === 'would send' ? 'WOULD SEND' : LABEL[l.kind]} · peak {l.peak}{l.gap ? ` · ${l.gap} ms apart` : ''} · moving before {l.before}</li>) : <li>Nothing yet. Try a gesture.</li>}
             </ul>
           </div>
         </>}

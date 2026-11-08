@@ -10,7 +10,8 @@ import { getOwnerKey, saveOwnerKey, clearOwnerKey } from './lib/owner.js';
 import { joinNearby, nearbyIdentity, deviceType } from './lib/nearby.js';
 import * as account from './lib/account.js';
 import * as vault from './lib/vault.js';
-import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, cancelPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing } from './lib/devices.js';
+import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, cancelPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing, touchSignal } from './lib/devices.js';
+import { watchTouch, askMotion, motionSupported } from './lib/touch.js';
 import * as linkStore from './lib/linkStore.js';
 import * as myLinks from './lib/myLinks.js';
 import { Footer } from './Legal.jsx';
@@ -470,6 +471,79 @@ function SendToDevices({ result, onPair }) {
         </div>
       )}
       {Object.values(status).filter(v => v && !['sending', 'sent'].includes(v)).map((m, i) => <div key={i} role="alert" className="mt-2 text-[12.5px] text-warn">{m}</div>)}
+    </div>
+  );
+}
+
+/* Touch to send, phone side: arm it, then touch the phone to the computer that is showing "Touch here". */
+const TOUCH_MS = 60000;
+function TouchSend({ peersVersion, onSend, disabled }) {
+  const [peers, setPeers] = useState(getPeers);
+  useEffect(() => setPeers(getPeers()), [peersVersion]);
+  const [armed, setArmed] = useState(null); // { until }
+  const [present, setPresent] = useState([]); // devices showing "Touch here", newest first
+  const [msg, setMsg] = useState('');
+  const presentRef = useRef([]); presentRef.current = present;
+  const sendRef = useRef(onSend); sendRef.current = onSend;
+  const stopAll = (except) => peers.filter(p => p.inboxId !== except).forEach(p => touchSignal(p, 'off', Date.now() + 30000));
+  const disarm = (except) => { setArmed(null); setPresent([]); stopAll(except); };
+  useEffect(() => {
+    if (!armed) return;
+    const onHere = (e) => { const s = e.detail; setPresent(ps => [s, ...ps.filter(p => p.from !== s.from)]); setMsg(''); };
+    window.addEventListener('ashdrop-touch-here', onHere);
+    const stop = watchTouch(() => {
+      const target = presentRef.current[0];
+      const peer = target && peers.find(p => p.inboxId === target.from);
+      try { navigator.vibrate?.(40); } catch {}
+      if (!peer) { setMsg('Felt the touch, but no computer has Ashdrop open yet. Open ashdrop.cc on it.'); return; }
+      setArmed(null); setPresent([]); stopAll(peer.inboxId);
+      sendRef.current(peer);
+    });
+    const end = setTimeout(() => { disarm(); setMsg(''); }, Math.max(0, armed.until - Date.now()));
+    return () => { window.removeEventListener('ashdrop-touch-here', onHere); stop(); clearTimeout(end); };
+  }, [armed]);
+  const armedRef = useRef(null); armedRef.current = armed;
+  useEffect(() => () => { if (armedRef.current) stopAll(); }, []); // leaving the page while armed
+  if (FINE_POINTER || !motionSupported() || !peers.length) return null;
+  const arm = async () => {
+    setMsg('');
+    if (!(await askMotion())) { setMsg('Motion access is needed to feel the touch. Reload the page and tap Allow.'); return; }
+    const until = Date.now() + TOUCH_MS;
+    peers.forEach(p => touchSignal(p, 'ready', until));
+    setPresent([]); setArmed({ until });
+  };
+  if (!armed) return (
+    <div className="flex flex-col gap-1.5">
+      <button id="touch-arm" onClick={arm} disabled={disabled} className="press rounded-2xl border border-line bg-panel px-4 py-3 flex items-center gap-3 text-left hover:border-mute disabled:opacity-50">
+        <span className="touch-dot shrink-0" aria-hidden="true" />
+        <span className="flex-1"><span className="block text-[14px] font-semibold">Touch to send</span><span className="block text-[12.5px] text-mute">Then touch your phone's edge to your computer.</span></span>
+      </button>
+      {msg && <div role="alert" className="text-[12.5px] text-warn">{msg}</div>}
+    </div>
+  );
+  return (
+    <div id="touch-armed" ref={(el) => { if (el && !el.dataset.seen) { el.dataset.seen = '1'; el.scrollIntoView?.({ block: 'center', behavior: 'smooth' }); } }} className="rounded-2xl border border-ember/60 bg-ember/10 px-4 py-4 flex flex-col gap-2 pop" role="status">
+      <div className="flex items-center gap-3">
+        <span className="touch-dot touch-dot-live shrink-0" aria-hidden="true" />
+        <span className="flex-1 text-[15px] font-semibold">Touch your phone to your computer</span>
+        <button id="touch-cancel" onClick={() => { disarm(); setMsg(''); }} className="text-[12.5px] text-mute hover:text-fg">Cancel</button>
+      </div>
+      <p className="text-[12.5px] text-mute">{present.length ? <>Ready on <span className="text-fg font-semibold">{present[0].fromName}</span>. Touch it gently with the top or side edge of your phone.</> : 'Waiting for a paired computer with Ashdrop open…'}</p>
+      {msg && <div role="alert" className="text-[12.5px] text-warn">{msg}</div>}
+    </div>
+  );
+}
+
+/* Touch to send, computer side: a glowing target at the top of the screen while a paired phone is ready. */
+function TouchTarget({ name, onClose }) {
+  return (
+    <div id="touch-target" className="fixed top-0 left-1/2 -translate-x-1/2 z-[70] pointer-events-none flex flex-col items-center" role="status">
+      <div className="touch-glow" aria-hidden="true" />
+      <div className="pointer-events-auto mt-[76px] rounded-full border border-ember bg-panel/95 px-4 py-2 flex items-center gap-2.5 shadow-2xl pop">
+        <span className="touch-dot touch-dot-live" aria-hidden="true" />
+        <span className="text-[13.5px] font-semibold">Touch {name} to this computer</span>
+        <button onClick={onClose} aria-label="Hide" className="text-mute hover:text-fg text-[15px] leading-none ml-1">×</button>
+      </div>
     </div>
   );
 }
@@ -3307,6 +3381,26 @@ function App() {
   const [peersVersion, setPeersVersion] = useState(0);
   const [inbox, setInbox] = useState([]);
   const [arrival, setArrival] = useState(null);
+  // Touch to send, receiving side: a paired phone is ready, so show where to touch.
+  const [touchTarget, setTouchTarget] = useState(null); // { from, fromName, until }
+  const waitingReady = useRef(null); // a "ready" that came while this tab was hidden
+  const showTouchTarget = (s) => {
+    setTouchTarget({ from: s.from, fromName: s.fromName, until: s.until });
+    const peer = getPeers().find(p => p.inboxId === s.from);
+    if (peer) touchSignal(peer, 'here', s.until);
+  };
+  const onTouchSignal = (s) => {
+    if (s.state === 'ready' && s.until > Date.now()) {
+      if (document.visibilityState === 'visible') showTouchTarget(s); else waitingReady.current = s;
+    } else if (s.state === 'off') { setTouchTarget(t => (t && t.from === s.from ? null : t)); if (waitingReady.current?.from === s.from) waitingReady.current = null; }
+    else if (s.state === 'here') window.dispatchEvent(new CustomEvent('ashdrop-touch-here', { detail: s }));
+  };
+  useEffect(() => {
+    const onVis = () => { const s = waitingReady.current; if (document.visibilityState === 'visible' && s) { waitingReady.current = null; if (s.until > Date.now()) showTouchTarget(s); } };
+    document.addEventListener('visibilitychange', onVis);
+    return () => document.removeEventListener('visibilitychange', onVis);
+  }, []);
+  useEffect(() => { if (!touchTarget) return; const t = setTimeout(() => setTouchTarget(null), Math.max(0, touchTarget.until - Date.now())); return () => clearTimeout(t); }, [touchTarget]);
   useEffect(() => {
     if (!getPeers().length && !hasPendingPairing()) return;
     return listenInbox((all) => {
@@ -3317,8 +3411,14 @@ function App() {
         const fresh = paired.filter(it => !it.already);
         if (fresh.length) { toast(`Paired with ${fresh.map(it => it.peer.name).join(', ')}. You can send to it now.`); setPeersVersion(v => v + 1); }
       }
-      const items = all.filter(it => it.type !== 'paired');
+      // Touch to send signals: short-lived, handled right away, never kept in the inbox.
+      const sig = all.filter(it => it.type === 'touch');
+      if (sig.length) { ackInbox(sig.map(it => it.msgId)); sig.forEach(onTouchSignal); }
+      const items = all.filter(it => it.type !== 'paired' && it.type !== 'touch');
       if (!items.length) return;
+      // Sent by a touch: it is what you were waiting for, so open it straight away.
+      const touched = items.find(it => it.touch && Date.now() - (it.sentAt || 0) < 60000);
+      if (touched) { setTouchTarget(null); openInboxItem(touched); if (items.length === 1) return; }
       setInbox(prev => [...prev, ...items.filter(it => !prev.some(p => p.msgId === it.msgId))]);
       setArrival({ item: items[items.length - 1], more: items.length - 1 });
     });
@@ -3483,7 +3583,7 @@ function App() {
   const [sendingTo, setSendingTo] = useState(null);
   // to: nothing (show the link), one paired device, or several. Several devices each get their own copy,
   // sealed with its own key, so a burn-after-reading link burns separately on every device.
-  const create = async (to = null) => {
+  const create = async (to = null, { touch = false } = {}) => {
     const targets = Array.isArray(to) ? to.filter(p => p?.inboxId) : to?.inboxId ? [to] : [];
     setErr('');
     if (!hasContent) return setErr('Paste or type something first, or drop files anywhere on the page.');
@@ -3526,7 +3626,7 @@ function App() {
         setSendingTo(peer.inboxId);
         try {
           const res = await makeLink(false, targets.length > 1 ? peer.name : null); lastRes = res;
-          await sendToPeer(peer, { id: res.id, keyStr: res.keyStr, label, kind, expiry, expiresAt: res.expiresAt, password: pwOn });
+          await sendToPeer(peer, { id: res.id, keyStr: res.keyStr, label, kind, expiry, expiresAt: res.expiresAt, password: pwOn, ...(touch ? { touch: true } : {}) });
           sent.push(peer.name);
         } catch (e) { failed.push(`${peer.name} (${e.message})`); }
       }
@@ -3869,6 +3969,7 @@ function App() {
                   className={`press rounded-xl py-3.5 px-5 font-display font-bold text-[17px] transition flex items-center justify-center gap-2 ${hasContent ? 'btn-burn ember-glow hover:brightness-110' : 'bg-panel text-mute border border-line'} ${busy ? 'shimmer' : ''}`}>
                   {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create link'}
                 </button>
+                {!qrOnly && hasContent && <TouchSend peersVersion={peersVersion} disabled={busy} onSend={(p) => create(p, { touch: true })} />}
                 {!qrOnly && <DeviceRow peersVersion={peersVersion} onPair={() => setPairOpen(true)} onSend={(p) => create(p)} sendingTo={sendingTo} disabled={busy} />}
                 <p className="text-[12.5px] text-mute text-center">
                   <a id="have-code" href="/code" className="text-fg underline underline-offset-2 hover:text-ember">Got a 4-word code?</a>
@@ -3895,6 +3996,7 @@ function App() {
         onClose={() => { setResult(null); startOver(); }}
         onOpenRecipient={() => { setRecipientOf({ id: result.id, keyStr: result.keyStr }); setResult(null); startOver(); }} />}
       {pairOpen && <PairModal onClose={() => setPairOpen(false)} onPaired={() => setPeersVersion(v => v + 1)} />}
+      {touchTarget && !recipientOf && <TouchTarget name={touchTarget.fromName} onClose={() => setTouchTarget(null)} />}
       {arrival && !recipientOf && <ArrivalCard item={arrival.item} more={arrival.more} onOpen={() => openInboxItem(arrival.item)} onLater={() => setArrival(null)} />}
       {recipientOf && <RecipientPage key={recipientOf.id} id={recipientOf.id} keyStr={recipientOf.keyStr} onExit={() => setRecipientOf(null)} />}
       {passModal && <PasscodeModal mode={passModal.mode} needCurrent={passModal.needCurrent} onSubmit={submitPassModal} onClose={() => setPassModal(null)} />}

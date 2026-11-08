@@ -185,6 +185,11 @@ async function dropTo(peer, item) {
   return postJson('/api/inbox/drop', { inboxId: peer.inboxId, msg, expiresAt: item.expiresAt });
 }
 
+/** Touch to send: a short-lived signal to a paired device (it expires on the server by itself). */
+export async function touchSignal(peer, state, until = Date.now() + 30000) {
+  return dropTo(peer, { type: 'touch', state, until, expiresAt: Math.min(until, Date.now() + 120000) }).catch(() => null);
+}
+
 /* The other device joined while our pairing window was closed. Accept it only with proof it knew our words. */
 async function acceptPair(body, m) {
   const c = body.card;
@@ -208,6 +213,10 @@ export async function openMessage(m) {
     const body = JSON.parse(dec.decode(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b64urlDecode(iv) }, key, b64urlDecode(ct))));
     if (body.type === 'pair') return await acceptPair(body, m);
     const peer = getPeers().find((p) => p.inboxId === body.from);
+    if (body.type === 'touch') { // Touch to send: "ready" (phone armed), "here" (this screen is open), "off"
+      if (!peer || !['ready', 'here', 'off'].includes(body.state)) return null;
+      return { type: 'touch', state: body.state, until: Number(body.until) || 0, sentAt: Number(body.sentAt) || 0, from: body.from, fromName: peer.name, msgId: m.id };
+    }
     if (!peer || !/^[a-z2-9]{10}$/.test(body.id) || typeof body.keyStr !== 'string') return null;
     return { ...body, msgId: m.id, fromName: peer.name };
   } catch { return null; }

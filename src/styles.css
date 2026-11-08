@@ -311,3 +311,12 @@
 .prerender p { color: var(--mute, #958f87); font-size: 14.5px; margin: 0 0 8px; }
 .prerender .prerender-lead { font-size: 15px; }
 .prerender a { color: var(--fg, #ece8e2); text-decoration: underline; text-underline-offset: 2px; }
+
+/* Touch to send */
+.touch-dot { width: 12px; height: 12px; border-radius: 999px; background: var(--ember); box-shadow: 0 0 0 4px color-mix(in srgb, var(--ember) 25%, transparent); }
+.touch-dot-live { animation: touch-pulse 1.4s ease-in-out infinite; }
+@keyframes touch-pulse { 0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--ember) 35%, transparent); } 50% { box-shadow: 0 0 0 10px color-mix(in srgb, var(--ember) 0%, transparent); } }
+.touch-glow { position: absolute; top: -90px; width: 520px; height: 180px; border-radius: 999px; background: radial-gradient(closest-side, color-mix(in srgb, var(--ember) 55%, transparent), transparent); filter: blur(10px); animation: touch-breathe 2s ease-in-out infinite; }
+@keyframes touch-breathe { 0%, 100% { opacity: .55; transform: scale(.92); } 50% { opacity: 1; transform: scale(1.05); } }
+:root[data-perf="on"] .touch-glow, :root[data-motion="off"] .touch-glow { animation: none; opacity: .8; }
+:root[data-perf="on"] .touch-dot-live, :root[data-motion="off"] .touch-dot-live { animation: none; }
