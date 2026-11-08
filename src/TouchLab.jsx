@@ -24,6 +24,8 @@ export function TouchLab() {
   const [log, setLog] = useState([]);
   const [rate, setRate] = useState(0);
   const [copied, setCopied] = useState(false);
+  const [testing, setTesting] = useState('touch'); // which gesture you are trying right now, so the log can be read back
+  const testingRef = useRef('touch'); testingRef.current = testing;
   const canvas = useRef(null);
   const sensRef = useRef(1);
   sensRef.current = sens;
@@ -32,7 +34,7 @@ export function TouchLab() {
   const fire = (kind, info) => {
     setCounts((c) => ({ ...c, [kind]: c[kind] + 1 }));
     setFlash({ kind, n: Date.now() });
-    setLog((l) => [{ kind, ...info, at: new Date().toLocaleTimeString() }, ...l].slice(0, 40));
+    setLog((l) => [{ kind, ...info, test: testingRef.current, sens: sensRef.current, at: new Date().toLocaleTimeString() }, ...l].slice(0, 80));
     try { navigator.vibrate?.(kind === 'back' ? [25, 60, 25] : 35); } catch {}
     try {
       const ctx = audio.current; if (!ctx) return;
@@ -68,25 +70,33 @@ export function TouchLab() {
         x = a.x - g.x; y = a.y - g.y; z = a.z - g.z;
       } else return;
       const m = Math.hypot(x, y, z);
+      const ax = Math.abs(x) >= Math.abs(y) && Math.abs(x) >= Math.abs(z) ? 'x' : Math.abs(y) >= Math.abs(z) ? 'y' : 'z'; // the direction of the jolt
       hist.push({ t, m }); while (hist.length && hist[0].t < t - 3000) hist.shift();
       const k = sensRef.current;
       // a spike: above the lowest threshold, and at least 90 ms after the last one (one jolt rings for a moment)
       const low = Math.min(BASE.touch, BASE.back) / k;
-      if (m > low && t - lastSpike > 90) {
+      // a jolt rings for a moment (about 100 ms on an iPhone), so a new spike needs 150 ms of space
+      if (pending && t - pending.t < 150 && m > pending.m) { pending.m = m; pending.ax = ax; }
+      if (m > low && t - lastSpike > 150) {
         lastSpike = t;
         const before = quietBefore(t, 450, 80); // how much the phone was moving just before
-        const spike = { t, m, before };
-        if (pending && t - pending.t >= 100 && t - pending.t <= 450 && pending.before < 0.9 && before < 2.5 && pending.m < BASE.tap / k && m < BASE.tap / k) {
-          fire('back', { peak: +Math.max(pending.m, m).toFixed(1), gap: Math.round(t - pending.t), before: +pending.before.toFixed(2) });
+        const spike = { t, m, before, ax };
+        if (pending && t - pending.t >= 150 && t - pending.t <= 500 && pending.before < 0.9 && before < 2.5 && pending.m < BASE.tap / k && m < BASE.tap / k) {
+          fire('back', { peak: +Math.max(pending.m, m).toFixed(1), gap: Math.round(t - pending.t), before: +pending.before.toFixed(2), ax: pending.ax + ax });
           pending = null;
         } else pending = spike;
       }
       // a single spike becomes Tap or Touch once no second one followed
-      if (pending && t - pending.t > 460) {
+      if (pending && t - pending.t > 510) {
         const p = pending; pending = null;
-        if (p.m >= BASE.tap / k) fire('tap', { peak: +p.m.toFixed(1), before: +p.before.toFixed(2) });
-        else if (p.m >= BASE.touch / k && p.before >= 0.6) fire('touch', { peak: +p.m.toFixed(1), before: +p.before.toFixed(2) });
-        else setLog((l) => [{ kind: 'ignored', peak: +p.m.toFixed(1), before: +p.before.toFixed(2), at: new Date().toLocaleTimeString() }, ...l].slice(0, 40));
+        // how still the phone was right after (resting against the laptop vs. carrying on moving)
+        const aft = hist.filter((h) => h.t > p.t + 150 && h.t < p.t + 500);
+        const after = aft.length ? aft.reduce((a, h) => a + h.m, 0) / aft.length : 0;
+        const info = { peak: +p.m.toFixed(1), before: +p.before.toFixed(2), after: +after.toFixed(2), ax: p.ax };
+        if (p.m >= BASE.tap / k) fire('tap', info);
+        // A gentle touch: your test showed the phone barely moves before it (slow approach), so no motion is required first.
+        else if (p.m >= BASE.touch / k) fire('touch', info);
+        else setLog((l) => [{ kind: 'ignored', ...info, test: testingRef.current, sens: sensRef.current, at: new Date().toLocaleTimeString() }, ...l].slice(0, 80));
       }
       if (t - t0 > 1000) { setRate(Math.round((n * 1000) / (t - t0))); n = 0; t0 = t; }
     };
@@ -119,7 +129,7 @@ export function TouchLab() {
     `Ashdrop touch test · ${navigator.userAgent}`,
     `samples/s: ${rate} · sensitivity: ${sens}`,
     `counts: touch ${counts.touch}, tap ${counts.tap}, double-tap ${counts.back}`,
-    ...log.map((l) => `${l.at} ${l.kind} peak=${l.peak}${l.gap ? ` gap=${l.gap}ms` : ''} before=${l.before}`),
+    ...log.map((l) => `${l.at} trying=${l.test} got=${l.kind} peak=${l.peak}${l.gap ? ` gap=${l.gap}ms` : ''} before=${l.before} after=${l.after} axis=${l.ax} sens=${l.sens}`),
   ].join('\n');
   const copy = async () => { try { await navigator.clipboard.writeText(report()); setCopied(true); setTimeout(() => setCopied(false), 1500); } catch {} };
 
@@ -156,14 +166,19 @@ export function TouchLab() {
             <input type="range" min="0.5" max="2" step="0.1" value={sens} onChange={(e) => setSens(+e.target.value)} style={{ '--pct': `${((sens - 0.5) / 1.5) * 100}%` }} className="flex-1" />
             <span className="w-10 text-right">{sens.toFixed(1)}×</span>
           </label>
-          <ol className="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-2 text-[13.5px]">
-            {['touch', 'tap', 'back'].map((k, i) => <li key={k}><span className="font-semibold">{i + 1}. {LABEL[k]}.</span> <span className="text-mute">{HINT[k]}</span></li>)}
-            <li><span className="font-semibold">4. False alarms.</span> <span className="text-mute">Walk around, pick the phone up, put it down normally. Anything that counts here would have sent by accident.</span></li>
-          </ol>
+<div className="rounded-2xl border border-line bg-panel p-4 flex flex-col gap-3">
+            <div className="text-[13px] font-semibold">What are you trying now?</div>
+            <div className="grid grid-cols-2 gap-2">
+              {[...['touch', 'tap', 'back'].map((k) => [k, LABEL[k]]), ['none', 'Nothing (false alarms)']].map(([k, l]) => (
+                <button key={k} id={`lab-try-${k}`} onClick={() => setTesting(k)} className={`press rounded-lg px-3 py-2 text-[12.5px] font-semibold border ${testing === k ? 'border-ember text-fg bg-ember/10' : 'border-line text-mute'}`}>{l}</button>
+              ))}
+            </div>
+            <p className="text-[13px] text-mute">{testing === 'none' ? 'Walk around, pick the phone up, put it down normally, put it in a pocket. Anything that counts now would have sent by accident.' : HINT[testing] + ' Do it 5 times, a few seconds apart.'}</p>
+          </div>
           <div className="flex flex-col gap-1.5">
             <div className="flex items-center justify-between"><span className="label">What it felt</span><button onClick={copy} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line">{copied ? 'Copied' : 'Copy results'}</button></div>
             <ul className="text-[12px] font-mono text-mute flex flex-col gap-0.5 max-h-56 overflow-auto">
-              {log.length ? log.map((l, i) => <li key={i} className={l.kind === 'ignored' ? 'opacity-60' : 'text-fg'}>{l.at} · {l.kind === 'ignored' ? 'ignored' : LABEL[l.kind]} · peak {l.peak}{l.gap ? ` · ${l.gap} ms apart` : ''} · moving before {l.before}</li>) : <li>Nothing yet. Try a gesture.</li>}
+              {log.length ? log.map((l, i) => <li key={i} className={l.kind === 'ignored' ? 'opacity-60' : 'text-fg'}>{l.at} · trying {l.test === 'none' ? 'nothing' : LABEL[l.test]?.toLowerCase()} → {l.kind === 'ignored' ? 'ignored' : LABEL[l.kind]} · peak {l.peak}{l.gap ? ` · ${l.gap} ms apart` : ''} · moving before {l.before}</li>) : <li>Nothing yet. Try a gesture.</li>}
             </ul>
           </div>
         </>}
