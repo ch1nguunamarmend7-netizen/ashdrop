@@ -443,6 +443,13 @@ function SendToDevices({ result, onPair }) {
           })}
         </div>
       )}
+      {peers.length > 1 && (
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <button id="send-all" onClick={() => peers.forEach(p => !status[p.inboxId] && send(p))} disabled={peers.every(p => status[p.inboxId])}
+            className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line hover:border-mute disabled:opacity-50">Send to all {peers.length}</button>
+          {result.expiry === 'burn' && <span className="text-[11.5px] text-mute">This link opens once, so only the first device to open it will see it. To give each device its own copy, use "All devices" on the Share screen before creating the link.</span>}
+        </div>
+      )}
       {Object.values(status).filter(v => v && !['sending', 'sent'].includes(v)).map((m, i) => <div key={i} role="alert" className="mt-2 text-[12.5px] text-warn">{m}</div>)}
     </div>
   );
@@ -451,7 +458,9 @@ function SendToDevices({ result, onPair }) {
 /* On the Share screen: send straight to a paired device, or pair one. */
 function DeviceRow({ peersVersion, onPair, onSend, sendingTo, disabled }) {
   const [peers, setPeers] = useState(getPeers);
-  useEffect(() => { setPeers(getPeers()); }, [peersVersion]);
+  const [picking, setPicking] = useState(false);
+  const [picked, setPicked] = useState([]);
+  useEffect(() => { setPeers(getPeers()); setPicked([]); setPicking(false); }, [peersVersion]);
   if (!peers.length) return (
     <div id="device-row" className="rounded-2xl border border-dashed border-line px-4 py-3 flex flex-wrap items-center gap-3">
       <span className="text-mute shrink-0">{DEVICE_ICON}</span>
@@ -459,17 +468,35 @@ function DeviceRow({ peersVersion, onPair, onSend, sendingTo, disabled }) {
       <button id="pair-home" onClick={onPair} className="press rounded-lg px-3 py-1.5 text-[12.5px] font-semibold border border-line hover:border-mute">Pair a device</button>
     </div>
   );
+  const spin = <span className="w-3.5 h-3.5 rounded-full border-2 border-mute border-t-transparent animate-spin" aria-hidden="true" />;
+  const toggle = (id) => setPicked(ps => (ps.includes(id) ? ps.filter(x => x !== id) : [...ps, id]));
+  const chosen = peers.filter(p => picked.includes(p.inboxId));
   return (
     <div id="device-row" className="flex flex-wrap items-center gap-2">
-      <span className="text-[12.5px] text-mute mr-1">Or send straight to</span>
-      {peers.map(p => (
-        <button key={p.inboxId} id={`home-send-${p.inboxId}`} onClick={() => onSend(p)} disabled={disabled}
-          className="press inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium border border-line hover:border-mute disabled:opacity-60">
-          {sendingTo === p.inboxId ? <span className="w-3.5 h-3.5 rounded-full border-2 border-mute border-t-transparent animate-spin" aria-hidden="true" /> : <span className="text-mute">{DEVICE_ICON}</span>}
-          {p.name}
+      <span className="text-[12.5px] text-mute mr-1">{picking ? 'Choose devices' : 'Or send straight to'}</span>
+      {peers.map(p => {
+        const on = picked.includes(p.inboxId);
+        return (
+          <button key={p.inboxId} id={`home-send-${p.inboxId}`} onClick={() => (picking ? toggle(p.inboxId) : onSend(p))} disabled={disabled} aria-pressed={picking ? on : undefined}
+            className={`press inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-medium border disabled:opacity-60 ${picking && on ? 'border-ember bg-[var(--ember-soft)]' : 'border-line hover:border-mute'}`}>
+            {sendingTo === p.inboxId ? spin : picking ? <span className={`w-4 h-4 rounded border grid place-items-center text-[11px] ${on ? 'bg-ember border-ember text-ink' : 'border-mute'}`} aria-hidden="true">{on ? '✓' : ''}</span> : <span className="text-mute">{DEVICE_ICON}</span>}
+            {p.name}
+          </button>
+        );
+      })}
+      {peers.length > 1 && !picking && (<>
+        <button id="home-send-all" onClick={() => onSend(peers)} disabled={disabled} className="press inline-flex items-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold border border-line hover:border-mute disabled:opacity-60">
+          {sendingTo && peers.some(p => p.inboxId === sendingTo) && disabled ? spin : null}All {peers.length} devices
         </button>
-      ))}
-      <button id="pair-home" onClick={onPair} className="rounded-lg px-2.5 py-2 text-[12.5px] text-mute hover:text-fg" title="Pair another device">+ Pair</button>
+        <button id="home-pick" onClick={() => { setPicking(true); setPicked([]); }} className="rounded-lg px-2.5 py-2 text-[12.5px] text-mute hover:text-fg">Choose…</button>
+      </>)}
+      {picking && (<>
+        <button id="home-send-picked" disabled={!chosen.length || disabled} onClick={() => { onSend(chosen); setPicking(false); setPicked([]); }}
+          className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold btn-primary disabled:opacity-50">Send to {chosen.length || ''} {chosen.length === 1 ? 'device' : 'devices'}</button>
+        <button onClick={() => { setPicking(false); setPicked([]); }} className="rounded-lg px-2.5 py-2 text-[12.5px] text-mute hover:text-fg">Cancel</button>
+      </>)}
+      {!picking && <button id="pair-home" onClick={onPair} className="rounded-lg px-2.5 py-2 text-[12.5px] text-mute hover:text-fg" title="Pair another device">+ Pair</button>}
+      {peers.length > 1 && <p className="basis-full text-[11.5px] text-mute">Sending to several devices gives each one its own copy, so a burn link burns separately on each.</p>}
     </div>
   );
 }
@@ -3322,8 +3349,10 @@ function App() {
   }, [view, result, recipientOf]);
 
   const [sendingTo, setSendingTo] = useState(null);
+  // to: nothing (show the link), one paired device, or several. Several devices each get their own copy,
+  // sealed with its own key, so a burn-after-reading link burns separately on every device.
   const create = async (to = null) => {
-    if (!to?.inboxId) to = null; // called straight from a click: no device
+    const targets = Array.isArray(to) ? to.filter(p => p?.inboxId) : to?.inboxId ? [to] : [];
     setErr('');
     if (!hasContent) return setErr('Paste or type something first, or drop files anywhere on the page.');
     if (pwOn && pw.length < 6) return setErr('Use a password of at least 6 characters, or turn the password off.');
@@ -3335,34 +3364,48 @@ function App() {
       if (kind === 'file' && files.length > 1) ({ header, content } = await bundleFiles(files));
       else if (kind === 'file') { header = { kind, name: file.name, mime: file.type || '' }; content = new Uint8Array(await file.arrayBuffer()); }
       else { header = { kind, lang }; content = enc.encode(text); }
-      const sealed = await sealPayload(pack(header, content), pwOn ? pw : null);
-      // Optional typeable code. On the tiny chance it is already taken, pick another one.
-      let code = null, created;
-      for (let tries = 0; ; tries++) {
-        code = codeOn ? generateCode() : null;
-        try {
-          created = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null, code: code ? await sealCode(code, sealed.keyStr) : null,
-            ownerKey: ownerOn ? getOwnerKey() : '', onProgress: sealed.ct.byteLength > 2e6 ? setProgress : undefined });
-          break;
-        } catch (e) { if (e.code !== 'code_taken' || tries >= 2) throw e; }
-      }
-      const { id, ownerToken, expiresAt } = created;
+      const payload = pack(header, content);
       const label = kind === 'file' ? (files.length > 1 ? `${files.length} files: ${files.map(f => f.name).join(', ')}`.slice(0, 80) : file.name) : ((text.split('\n').find(l => l.trim()) || 'Untitled').trim().slice(0, 60));
-      const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
-      await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
-      if (linksVisible) setLinks(prev => [record, ...prev]);
-      const res = { ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code };
-      if (to) {
-        setSendingTo(to.inboxId);
+      const makeLink = async (withCode, forName) => {
+        const sealed = await sealPayload(payload, pwOn ? pw : null);
+        // Optional typeable code. On the tiny chance it is already taken, pick another one.
+        let code = null, created;
+        for (let tries = 0; ; tries++) {
+          code = withCode ? generateCode() : null;
+          try {
+            created = await createLink({ ...sealed, expiry, maxAttempts: pwOn ? maxAttempts : null, code: code ? await sealCode(code, sealed.keyStr) : null,
+              ownerKey: ownerOn ? getOwnerKey() : '', onProgress: sealed.ct.byteLength > 2e6 ? setProgress : undefined });
+            break;
+          } catch (e) { if (e.code !== 'code_taken' || tries >= 2) throw e; }
+        }
+        const { id, ownerToken, expiresAt } = created;
+        const shown = forName ? `${label} → ${forName}`.slice(0, 90) : label;
+        const record = { id, keyStr: sealed.keyStr, ownerToken, expiresAt, maxAttempts: pwOn ? maxAttempts : null, kind, lang: kind === 'paste' ? lang : null, label: shown, expiry, password: pwOn, qrOnly, code, createdAt: Date.now() };
+        await linkStore.addLink(record); // sealed to the lock's public key when the lock is on
+        if (linksVisible) setLinks(prev => [record, ...prev]);
+        return { ...sealed, id, expiry, expiresAt, label, password: pwOn, maxAttempts, kind, qrOnly, code };
+      };
+      if (!targets.length) { setResult(await makeLink(codeOn)); return; }
+      const sent = [], failed = []; let lastRes = null;
+      for (const peer of targets) {
+        setSendingTo(peer.inboxId);
         try {
-          await sendToPeer(to, { id, keyStr: sealed.keyStr, label, kind, expiry, expiresAt, password: pwOn });
-          toast(`Sent to ${to.name}.${pwOn ? ' Send the password another way.' : ' It opens there with one tap.'}`);
-          startOver();
-        } catch (e) { setResult(res); toast(`Could not reach ${to.name}: ${e.message} Here is the link instead.`); }
-        finally { setSendingTo(null); }
-      } else setResult(res);
+          const res = await makeLink(false, targets.length > 1 ? peer.name : null); lastRes = res;
+          await sendToPeer(peer, { id: res.id, keyStr: res.keyStr, label, kind, expiry, expiresAt: res.expiresAt, password: pwOn });
+          sent.push(peer.name);
+        } catch (e) { failed.push(`${peer.name} (${e.message})`); }
+      }
+      setSendingTo(null);
+      if (sent.length) {
+        const who = sent.length === 1 ? sent[0] : `${sent.length} devices`;
+        toast(`Sent to ${who}.${pwOn ? ' Send the password another way.' : sent.length > 1 ? ' Each got its own copy.' : ' It opens there with one tap.'}${failed.length ? ` Not sent: ${failed.join(', ')}.` : ''}`);
+        if (!failed.length) startOver();
+      } else {
+        if (lastRes && targets.length === 1) setResult(lastRes);
+        toast(`Could not reach ${failed.join(', ')}.${lastRes && targets.length === 1 ? ' Here is the link instead.' : ''}`);
+      }
     } catch (e) { setErr(e.message.startsWith('Could not') || e.message.startsWith('That') || e.message.startsWith('Too many') ? e.message : 'Encryption failed: ' + e.message); }
-    finally { setBusy(false); setProgress(null); }
+    finally { setBusy(false); setProgress(null); setSendingTo(null); }
   };
 
   const NAV = [['share', 'Share'], ['nearby', 'Nearby'], ['vault', FEATURES.vaultFiles || FEATURES.cloudVault ? 'Vault' : 'My links']];
