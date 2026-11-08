@@ -45,6 +45,12 @@ const SECURITY_HEADERS = {
 export default {
   async fetch(request, env, ctx) {
     const url = new URL(request.url);
+    // Never serve the site over plain http: an unencrypted page could be altered on its way to the visitor,
+    // and altered code could read the key in a link. Local development (localhost) is left alone.
+    if (url.protocol === 'http:' && !/^(localhost|127\.\d+\.\d+\.\d+|\[::1\])$|\.localhost$/.test(url.hostname)) {
+      url.protocol = 'https:';
+      return new Response(null, { status: 301, headers: { location: url.toString(), 'cache-control': 'public, max-age=86400' } });
+    }
     let res;
     if (url.pathname === '/.well-known/security.txt') {
     res = new Response(securityTxt(url.origin), { headers: { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'public, max-age=86400' } });

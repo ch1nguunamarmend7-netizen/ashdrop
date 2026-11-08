@@ -476,3 +476,14 @@ test('CSP allows live connections to the same host only', async () => {
   const csp = (await call(env, '/')).headers.get('content-security-policy');
   assert.match(csp, /connect-src 'self' wss:\/\/ashdrop\.test(;|$)/);
 });
+
+test('plain http is redirected to https (except localhost)', async () => {
+  const env = makeEnv();
+  for (const path of ['/', '/p/abcdefghjk?x=1', '/api/oauth/providers']) {
+    const r = await worker.fetch(new Request('http://ashdrop.test' + path), env, { waitUntil() {} });
+    assert.equal(r.status, 301, path);
+    assert.equal(r.headers.get('location'), 'https://ashdrop.test' + path);
+  }
+  const local = await worker.fetch(new Request('http://localhost:8787/api/oauth/providers'), env, { waitUntil() {} });
+  assert.notEqual(local.status, 301);
+});
