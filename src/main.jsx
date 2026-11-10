@@ -22,22 +22,13 @@ try {
   if (saved.speed) document.documentElement.style.setProperty('--spd', String(saved.speed));
 } catch {}
 
-// iPhone zooms in when you tap a small text field, but never zooms back out when the keyboard closes.
-// When focus leaves a field (and does not move to another one), briefly cap the zoom at 1 so the page
-// snaps back, then lift the cap again so pinch-to-zoom keeps working.
+// iPhone zooms in when you tap a small text field and never zooms back out when the keyboard closes.
+// Capping the zoom at 1 stops that automatic zoom. On iPhone and iPad this does NOT block zooming
+// yourself (iOS ignores the cap for pinch-to-zoom), so it is only set there; Android keeps the plain tag.
 const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
 if (IOS) {
   const meta = document.querySelector('meta[name=viewport]');
-  const base = meta?.getAttribute('content') || '';
-  const isField = (el) => !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'submit', 'file'].includes(el.type)) || el.isContentEditable);
-  document.addEventListener('focusout', (e) => {
-    if (!meta || !isField(e.target) || isField(e.relatedTarget)) return;
-    setTimeout(() => {
-      if (isField(document.activeElement)) return; // moved on to another field
-      meta.setAttribute('content', base + ', maximum-scale=1');
-      setTimeout(() => meta.setAttribute('content', base), 400);
-    }, 50);
-  });
+  if (meta && !/maximum-scale/.test(meta.content)) meta.setAttribute('content', meta.content + ', maximum-scale=1');
 }
 
 const root = createRoot(document.getElementById('root'));

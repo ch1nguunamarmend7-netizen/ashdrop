@@ -3650,16 +3650,16 @@ function App() {
     <div className="min-h-full">
       {/* header */}
       <header className="sticky z-40 bg-ink/95 backdrop-blur-sm border-b border-line" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
-        <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-2 sm:gap-3">
-          <button onClick={() => { setView('share'); }} aria-label="Ashdrop home"><Logo /></button>
+        <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-1.5 sm:gap-3">
+          <button onClick={() => { setView('share'); }} aria-label="Ashdrop home" className="shrink-0"><Logo /></button>
           {ownerOn && <span id="owner-chip" title="Owner key active on this device: links up to 95 MB, 7-day expiry" style={{ '--t1': 'var(--gold)' }} className="tone-chip hidden sm:inline-flex border rounded-full px-2 py-0.5 text-[11px] font-semibold">Owner</span>}
-          <nav className="mx-auto overflow-x-auto no-scrollbar min-w-0" aria-label="Sections">
-            <div className="relative grid grid-cols-3 gap-1 p-1 rounded-xl bg-panel border border-line w-max">
+          <nav className="flex-1 sm:flex-none sm:mx-auto min-w-0" aria-label="Sections">
+            <div className="relative grid grid-cols-3 gap-1 p-1 rounded-xl bg-panel border border-line w-full sm:w-max">
               <span className="absolute top-1 bottom-1 left-1 rounded-lg fill-on transition-all duration-500" aria-hidden="true"
                 style={{ width: 'calc((100% - 16px) / 3)', transform: `translateX(calc(${Math.max(navIdx, 0)} * (100% + 4px))) scale(${navIdx < 0 ? 0.85 : 1})`, opacity: navIdx < 0 ? 0 : 1, transitionTimingFunction: 'var(--ease-out)' }} />
               {NAV.map(([id, label]) => (
                 <button key={id} id={`nav-${id}`} onClick={() => setView(id)} aria-current={view === id ? 'page' : undefined}
-                  className={`relative z-10 px-2.5 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap transition-colors duration-300 ${view === id ? 'on-fill font-semibold' : 'text-mute hover:text-fg'}`}>
+                  className={`relative z-10 px-1 sm:px-3.5 py-1.5 rounded-lg text-[13px] font-medium whitespace-nowrap text-center transition-colors duration-300 ${view === id ? 'on-fill font-semibold' : 'text-mute hover:text-fg'}`}>
                   {label}
                   {id === 'vault' && inbox.length > 0 && <span id="inbox-badge" className="ml-1.5 inline-grid place-items-center min-w-4 h-4 px-1 rounded-full bg-ember text-[10.5px] font-semibold text-[#1a0d05] align-[1px]" aria-label={`${inbox.length} new`}>{inbox.length}</span>}
                 </button>
@@ -3667,11 +3667,11 @@ function App() {
             </div>
           </nav>
           <button id="nav-how" onClick={() => setView('how')} aria-label="How it works" title="How it works" aria-current={view === 'how' ? 'page' : undefined}
-            className={`press shrink-0 w-9 h-9 rounded-lg grid place-items-center border transition-colors duration-300 ${view === 'how' ? 'bg-fg text-ink border-fg' : 'border-line text-mute hover:text-fg hover:border-mute'}`}>
+            className={`press shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-lg grid place-items-center border transition-colors duration-300 ${view === 'how' ? 'bg-fg text-ink border-fg' : 'border-line text-mute hover:text-fg hover:border-mute'}`}>
             <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.6.3-1 .8-1 1.5V14M12 17h.01"/></svg>
           </button>
           <button id="nav-settings" onClick={() => setView('settings')} aria-label="Settings" title="Settings" aria-current={view === 'settings' ? 'page' : undefined}
-            className={`group shrink-0 w-9 h-9 rounded-lg grid place-items-center border transition-colors duration-300 ${view === 'settings' ? 'bg-fg text-ink border-fg' : 'border-line text-mute hover:text-fg hover:border-mute'}`}>
+            className={`group shrink-0 w-8 h-8 sm:w-9 sm:h-9 rounded-lg grid place-items-center border transition-colors duration-300 ${view === 'settings' ? 'bg-fg text-ink border-fg' : 'border-line text-mute hover:text-fg hover:border-mute'}`}>
             <span className={`transition-transform duration-500 ${view === 'settings' ? 'rotate-90' : 'group-hover:rotate-45'}`} style={{ transitionTimingFunction: 'var(--ease-out)' }}>{GEAR}</span>
           </button>
           {!FEATURES.pro && FEATURES.accounts && !signedIn
