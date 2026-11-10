@@ -22,6 +22,24 @@ try {
   if (saved.speed) document.documentElement.style.setProperty('--spd', String(saved.speed));
 } catch {}
 
+// iPhone zooms in when you tap a small text field, but never zooms back out when the keyboard closes.
+// When focus leaves a field (and does not move to another one), briefly cap the zoom at 1 so the page
+// snaps back, then lift the cap again so pinch-to-zoom keeps working.
+const IOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+if (IOS) {
+  const meta = document.querySelector('meta[name=viewport]');
+  const base = meta?.getAttribute('content') || '';
+  const isField = (el) => !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'submit', 'file'].includes(el.type)) || el.isContentEditable);
+  document.addEventListener('focusout', (e) => {
+    if (!meta || !isField(e.target) || isField(e.relatedTarget)) return;
+    setTimeout(() => {
+      if (isField(document.activeElement)) return; // moved on to another field
+      meta.setAttribute('content', base + ', maximum-scale=1');
+      setTimeout(() => meta.setAttribute('content', base), 400);
+    }, 50);
+  });
+}
+
 const root = createRoot(document.getElementById('root'));
 const match = location.pathname.match(/^\/p\/([a-z2-9]{10})\/?$/);
 const legal = location.pathname.match(/^\/(terms|privacy|security|contact)\/?$/);
