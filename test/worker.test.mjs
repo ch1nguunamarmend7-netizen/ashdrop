@@ -487,3 +487,28 @@ test('plain http is redirected to https (except localhost)', async () => {
   const local = await worker.fetch(new Request('http://localhost:8787/api/oauth/providers'), env, { waitUntil() {} });
   assert.notEqual(local.status, 301);
 });
+
+test('stats: daily totals of links made and opened and pairings, readable only with the owner key', async () => {
+  const env = makeEnv();
+  const KEY = 'owner-key-' + 'z'.repeat(40);
+  env.OWNER_KEY = KEY;
+  const { body } = await create(env);
+  await create(env);
+  await createAs(env, KEY); // the owner's own links are counted apart, so testing does not look like users
+  await call(env, `/api/p/${body.id}/open`, { method: 'POST', body: '{}' }).then((r) => r.arrayBuffer());
+  const lookup = b64(rand(32));
+  await call(env, '/api/pair', { method: 'POST', body: JSON.stringify({ lookup, role: 'a', card: 'cardA' }) });
+  await call(env, '/api/pair', { method: 'POST', body: JSON.stringify({ lookup, role: 'b', card: 'cardB' }) });
+  await settle(env);
+  assert.equal((await call(env, '/api/stats')).status, 404, 'hidden from everyone else');
+  assert.equal((await call(env, '/api/stats', { headers: { 'x-ashdrop-owner-key': 'wrong-' + 'k'.repeat(40) } })).status, 404);
+  const r = await call(env, '/api/stats', { headers: { 'x-ashdrop-owner-key': KEY } });
+  assert.equal(r.status, 200);
+  const { days } = await r.json();
+  assert.equal(days.length, 1);
+  assert.equal(days[0].day, new Date().toISOString().slice(0, 10));
+  assert.deepEqual({ created: days[0].created, created_owner: days[0].created_owner, opened: days[0].opened, paired: days[0].paired }, { created: 2, created_owner: 1, opened: 1, paired: 1 });
+  // nothing but numbers is stored
+  const stored = JSON.stringify(days);
+  assert.ok(!stored.includes(body.id) && !stored.includes('card'), 'no ids or contents in the totals');
+});

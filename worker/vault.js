@@ -23,6 +23,11 @@ const LINKS_KEEP_MS = 8 * 864e5;               // the longest a link can live, p
 const DEFAULT_QUOTA = 5 * 1024 ** 3;            // 5 GB
 const MAX_QUOTA = 2 * 1024 ** 4;                // 2 TB
 const enc = new TextEncoder();
+// Private daily totals for the site owner: links made and opened, devices paired, accounts made.
+// Only a number per day. No addresses, ids or contents.
+export const STAT_EVENTS = ['created', 'created_owner', 'opened', 'paired', 'signup'];
+/** Add one to today's total. Never fails or slows the request it is counting. */
+export const countStat = (env, event) => (env?.USERS ? call(indexStub(env, 'stats:v1'), 'stat-inc', { event }).catch(() => null) : Promise.resolve(null));
 
 const sha = async (s) => bytesToB64url(new Uint8Array(await crypto.subtle.digest('SHA-256', typeof s === 'string' ? enc.encode(s) : s)));
 const rand = (n) => bytesToB64url(crypto.getRandomValues(new Uint8Array(n)));
@@ -62,6 +67,19 @@ export class UserDO {
         return v && (!v.exp || Date.now() < v.exp) ? json(v) : json({ error: 'not_found' }, 404);
       }
       case 'index-drop': await this.s.deleteAll(); return json({ ok: true });
+      // ----- private daily totals for the site owner (one object, 'stats:v1') -----
+      case 'stat-inc': {
+        if (!STAT_EVENTS.includes(b.event)) return json({ error: 'bad_event' }, 400);
+        const k = 'd:' + new Date().toISOString().slice(0, 10);
+        const d = (await this.s.get(k)) || {};
+        d[b.event] = (d[b.event] || 0) + 1;
+        await this.s.put(k, d);
+        return json({ ok: true });
+      }
+      case 'stat-get': {
+        const all = await this.s.list({ prefix: 'd:' });
+        return json({ days: [...all].map(([k, v]) => ({ day: k.slice(2), ...v })).sort((x, y) => (x.day < y.day ? 1 : -1)).slice(0, 90) });
+      }
 
       // ----- the account -----
       case 'create': return this.create(b);
@@ -146,6 +164,7 @@ export class UserDO {
       quota: b.quota, used: 0, owner: !!b.owner, passkeys: [],
     };
     await this.s.put('user', u);
+    countStat(this.env, 'signup');
     return json({ token: await this.newSession(b.label), account: this.public(u) });
   }
 

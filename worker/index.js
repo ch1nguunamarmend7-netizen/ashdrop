@@ -3,7 +3,7 @@
 // token. The decryption key lives in the URL fragment and never reaches this code.
 
 import { LinkDO, json, sha256b64, bytesToB64url } from './link.js';
-import { UserDO, handleAccount, handleVault } from './vault.js';
+import { UserDO, handleAccount, handleVault, countStat, call as callUser, indexStub } from './vault.js';
 import { handleOAuth } from './oauth.js';
 export { LinkDO, UserDO };
 
@@ -101,6 +101,10 @@ async function handleApi(request, env, url, ctx) {
   const parts = url.pathname.split('/').filter(Boolean); // ['api', 'p', id?, action?]
   if (parts[1] === 'admin') return handleAdmin(request, env, parts);
   if (parts[1] === 'owner' && parts.length === 2 && request.method === 'POST') return checkOwner(request, env);
+  if (parts[1] === 'stats' && parts.length === 2 && request.method === 'GET') { // site owner only: daily totals
+    if (!(await isSiteOwner(request, env))) return json({ error: 'not_found' }, 404);
+    return json((await callUser(indexStub(env, 'stats:v1'), 'stat-get', {})).data);
+  }
   if (parts[1] === 'inbox') return handleInbox(request, env, url, parts);
   if (parts[1] === 'nearby' && parts[2] === 'ws') return nearbyRoom(request, env);
   if (parts[1] === 'account') return handleAccount(request, env, url, parts, { allowed, isSiteOwner });
@@ -110,7 +114,7 @@ async function handleApi(request, env, url, ctx) {
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
 
-  if (parts.length === 2 && request.method === 'POST') return createLink(request, env);
+  if (parts.length === 2 && request.method === 'POST') return createLink(request, env, ctx);
 
   const id = parts[2];
   if (!ID_RE.test(id || '')) return json({ error: 'not_found' }, 404);
@@ -132,7 +136,7 @@ async function handleApi(request, env, url, ctx) {
 }
 
 // POST /api/p   body: ciphertext bytes   header x-ashdrop-meta: JSON
-async function createLink(request, env) {
+async function createLink(request, env, ctx) {
   const owner = await isSiteOwner(request, env);
   if (!owner && !(await allowed(env.CREATE_LIMITER, request))) return json({ error: 'rate_limited' }, 429);
   const limit = owner ? OWNER_MAX_BODY : MAX_BODY;
@@ -200,6 +204,8 @@ async function createLink(request, env) {
       return json({ error: 'code_taken' }, 409);
     }
   }
+  const counted = countStat(env, owner ? 'created_owner' : 'created'); // started first: ctx?.waitUntil?.(…) would skip it when there is no ctx
+  ctx?.waitUntil?.(counted);
   return json({ id, ownerToken, expiresAt }, 201);
 }
 
@@ -235,6 +241,8 @@ async function openLink(request, env, id, call, ctx) {
 
   const obj = await env.BLOBS.get(`p/${id}`);
   if (!obj) return json({ status: 'gone', reason: 'missing' }, 410);
+  const counted = countStat(env, 'opened');
+  ctx?.waitUntil?.(counted);
   // Stream it out rather than loading up to 95 MB into memory. For a burn link the Durable Object has
   // already marked it burned; the ciphertext is deleted as soon as the last byte has been sent
   // (and the Durable Object's alarm deletes it later anyway, in case the download is cut off).
@@ -343,7 +351,9 @@ async function pairDevices(request, env) {
   if (!isB64(b.lookup, 43) || !['a', 'b'].includes(b.role)) return json({ error: 'bad_pair' }, 400);
   if (b.card !== undefined && (typeof b.card !== 'string' || b.card.length > MSG_MAX || !B64URL_RE.test(b.card))) return json({ error: 'bad_card' }, 400);
   if (b.role === 'b' && !b.card) return json({ error: 'bad_card' }, 400);
-  return post(env.LINKS.get(env.LINKS.idFromName('pair:' + (await sha256b64(b.lookup)))), 'pair', { role: b.role, card: b.card });
+  const r = await post(env.LINKS.get(env.LINKS.idFromName('pair:' + (await sha256b64(b.lookup)))), 'pair', { role: b.role, card: b.card });
+  if (b.role === 'b' && r.status === 200) await countStat(env, 'paired'); // the second device joined: a pairing happened
+  return r;
 }
 
 const inboxStub = (env, inboxId) => env.LINKS.get(env.LINKS.idFromName('inbox:' + inboxId));

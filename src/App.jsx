@@ -1390,6 +1390,49 @@ function AccountSettings({ toast }) {
 }
 
 /* Owner access → make invite codes for the vault beta. */
+/* Site owner only: daily totals from the server. Real people, not bots: a bot does not make or open a link. */
+function OwnerStats() {
+  const [days, setDays] = useState(null);
+  const [err, setErr] = useState('');
+  const [range, setRange] = useState(14);
+  useEffect(() => {
+    fetch('/api/stats', { headers: { 'x-ashdrop-owner-key': getOwnerKey() || '' } })
+      .then(r => (r.ok ? r.json() : Promise.reject(new Error('Could not load usage.'))))
+      .then(d => setDays(d.days || [])).catch(e => setErr(e.message));
+  }, []);
+  // fill in the quiet days, newest first
+  const rows = [];
+  for (let i = 0; i < range; i++) {
+    const day = new Date(Date.now() - i * 864e5).toISOString().slice(0, 10);
+    rows.push(days?.find(d => d.day === day) || { day });
+  }
+  const sum = (k) => rows.reduce((n, r) => n + (r[k] || 0), 0);
+  const cols = [['created', 'Links made'], ['opened', 'Opened'], ['paired', 'Pairings'], ['signup', 'Accounts'], ['created_owner', 'Yours']];
+  return (
+    <Row stack title="Usage" sub="Real use, counted on the server: a bot does not make or open links. Only a number per day is kept, nothing about who. Your own links (with the owner key) are counted apart under Yours. Days are in UTC.">
+      {err ? <div className="text-[12.5px] text-warn">{err}</div> : !days ? <div className="text-[12.5px] text-mute">Loading…</div> : (
+        <div className="flex flex-col gap-2">
+          <div className="flex gap-1.5">{[7, 14, 30].map(n => <button key={n} onClick={() => setRange(n)} className={`press rounded-lg px-2.5 py-1 text-[12px] font-semibold border ${range === n ? 'border-fg text-fg' : 'border-line text-mute'}`}>{n} days</button>)}</div>
+          <div className="overflow-x-auto">
+            <table id="owner-stats" className="w-full text-[12.5px] tabular-nums">
+              <thead><tr className="text-mute text-left"><th className="font-medium py-1.5 pr-3">Day</th>{cols.map(([k, l]) => <th key={k} className="font-medium py-1.5 px-2 text-right whitespace-nowrap">{l}</th>)}</tr></thead>
+              <tbody>
+                <tr className="border-t border-line font-semibold"><td className="py-1.5 pr-3">Total</td>{cols.map(([k]) => <td key={k} className="py-1.5 px-2 text-right">{sum(k)}</td>)}</tr>
+                {rows.map(r => (
+                  <tr key={r.day} className="border-t border-line">
+                    <td className="py-1.5 pr-3 text-mute whitespace-nowrap">{new Date(r.day + 'T12:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</td>
+                    {cols.map(([k]) => <td key={k} className={`py-1.5 px-2 text-right ${r[k] ? '' : 'text-mute/50'}`}>{r[k] || 0}</td>)}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </Row>
+  );
+}
+
 function InviteMaker() {
   const [gb, setGb] = useState(5);
   const [codes, setCodes] = useState([]);
@@ -3268,6 +3311,7 @@ function Settings({ toast, onPair, peersVersion, onPeersChange, ownerOn, onOwner
 
       <Section title="Owner access" i={4}>
         <OwnerAccess on={ownerOn} onChange={onOwnerChange} />
+        {ownerOn && <OwnerStats />}
         {ownerOn && FEATURES.cloudVault && <InviteMaker />}
       </Section>
 

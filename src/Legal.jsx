@@ -86,6 +86,11 @@ function Privacy() {
         3 to 7 days so we can fix problems. The link key is never in these logs, because browsers do not send the part
         of a link after the # to any server.
       </P>
+      <P>
+        We also keep a few running totals per day: how many links were made and opened, how many devices were paired
+        and how many vault accounts were created. These are plain counts with nothing about who, no addresses, no link
+        ids and no contents.
+      </P>
 
       <H>Your devices</H>
       <P>
