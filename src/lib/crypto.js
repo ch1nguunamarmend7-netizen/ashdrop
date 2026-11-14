@@ -12,8 +12,10 @@ export const b64url = (buf) => {
 export const b64urlDecode = (s) =>
   Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/') + '==='.slice((s.length + 3) % 4)), (c) => c.charCodeAt(0));
 export const hex = (buf, n = 32) => Array.from(new Uint8Array(buf).slice(0, n)).map((b) => b.toString(16).padStart(2, '0')).join(' ');
+const trim = (x) => x.replace(/\.?0+$/, ''); // 5.00 GB -> 5 GB, 1.50 GB -> 1.5 GB
 export const fmtBytes = (n) =>
-  n < 1024 ? `${n} B` : n < 1048576 ? `${(n / 1024).toFixed(1)} KB` : n < 1073741824 ? `${(n / 1048576).toFixed(2)} MB` : `${(n / 1073741824).toFixed(2)} GB`;
+  n < 1024 ? `${n} B` : n < 1048576 ? `${trim((n / 1024).toFixed(1))} KB` : n < 1073741824 ? `${trim((n / 1048576).toFixed(2))} MB`
+    : n < 1099511627776 ? `${trim((n / 1073741824).toFixed(2))} GB` : `${trim((n / 1099511627776).toFixed(2))} TB`;
 
 /* The file name, type and text format travel inside the ciphertext, so the server
    learns nothing but a size. Layout: [4-byte header length][JSON header][content]. */

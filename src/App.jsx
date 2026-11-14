@@ -1138,7 +1138,7 @@ function UnlockGate({ email, onReady, onSignOut }) {
 }
 
 /* The vault itself, once unlocked. */
-function CloudVault({ onShare, toast }) {
+function CloudVault({ onShare, toast, onAccountChange }) {
   const [state, setState] = useState({ loading: true, files: [], used: 0, quota: 0 });
   const [prefs, setPrefs] = useState({ folders: [] });
   const [folder, setFolder] = useState('all');
@@ -1207,6 +1207,13 @@ function CloudVault({ onShare, toast }) {
 
   return (
     <div className="flex flex-col gap-4" id="cloud-vault">
+      <div id="vault-account" className="flex flex-wrap items-center gap-2 text-[12.5px]">
+        <span className="text-mute min-w-0 truncate">Signed in as <span className="text-fg font-medium">{account.session()?.email}</span></span>
+        <span className="ml-auto flex gap-2">
+          <button id="vault-lock" onClick={() => { account.lockVault(); toast('Vault locked on this tab.'); onAccountChange?.(); }} className="press rounded-lg px-3 py-1.5 font-semibold border border-line hover:border-mute">Lock</button>
+          <button id="vault-signout" onClick={async () => { await account.signOut(); toast('Signed out. Your vault key was cleared from this browser.'); onAccountChange?.(); }} className="press rounded-lg px-3 py-1.5 font-semibold border border-line hover:border-mute">Sign out</button>
+        </span>
+      </div>
       <div className="rounded-2xl border border-line bg-panel p-4 flex flex-wrap items-center gap-4">
         <div className="flex-1 min-w-[200px]">
           <div className="flex justify-between text-[12.5px] mb-1.5"><span>{fmtBytes(state.used)} used</span><span className="text-mute">{fmtBytes(state.quota)} total</span></div>
@@ -1302,7 +1309,7 @@ function VaultFiles({ onShare, toast }) {
   if (ret?.status === 'new') return <OAuthSetup res={ret} ownerKey={ownerKey || undefined} onReady={() => { ready(); toast('Your vault is ready. Tip: add a passkey in Settings → Account to unlock without the PIN.'); }} onCancel={() => setRet(null)} />;
   if (!s) return <AccountGate key={ret?.error || ''} initialMsg={ret?.error || ''} onReady={ready} ownerKey={ownerKey || undefined} />;
   if (!account.vaultKeyRaw()) return <UnlockGate email={s.email} onReady={ready} onSignOut={async () => { await account.signOut(); ready(); }} />;
-  return <CloudVault onShare={onShare} toast={toast} />;
+  return <CloudVault onShare={onShare} toast={toast} onAccountChange={ready} />;
 }
 
 /* Settings → Account */
