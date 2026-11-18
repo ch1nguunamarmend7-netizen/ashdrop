@@ -92,6 +92,15 @@ function Privacy() {
         ids and no contents.
       </P>
 
+      <H>Live transfers</H>
+      <P>
+        A file too big for a link is sent as a live transfer. Your browser cuts it into encrypted parts and the other
+        device picks them up while both of you have Ashdrop open. Our server only passes the parts along: it holds a
+        few at a time (about 24 MB), cannot read them, and deletes each one as soon as the other device has it. The
+        whole file is never stored. If a transfer is cancelled or nobody continues it for 10 minutes, whatever was
+        waiting is deleted. We keep its size and progress for about an hour so both sides can see how it ended.
+      </P>
+
       <H>Your devices</H>
       <P>
         If you pair devices, each one gets a random inbox number. Items you send between them wait in that inbox,

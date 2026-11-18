@@ -25,7 +25,7 @@ const MAX_QUOTA = 2 * 1024 ** 4;                // 2 TB
 const enc = new TextEncoder();
 // Private daily totals for the site owner: links made and opened, devices paired, accounts made.
 // Only a number per day. No addresses, ids or contents.
-export const STAT_EVENTS = ['created', 'created_owner', 'opened', 'paired', 'signup'];
+export const STAT_EVENTS = ['created', 'created_owner', 'opened', 'paired', 'signup', 'live_created', 'live_done'];
 /** Add one to today's total. Never fails or slows the request it is counting. */
 export const countStat = (env, event) => (env?.USERS ? call(indexStub(env, 'stats:v1'), 'stat-inc', { event }).catch(() => null) : Promise.resolve(null));
 

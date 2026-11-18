@@ -7,6 +7,7 @@
 - Paste text or drop files (up to 25 MB per link) and get a link. The link can burn after one view, expire after an hour or a day, or need a password with a limited number of tries.
 - Encryption: AES-256-GCM in the browser. The key is in the link's fragment (after the #), which browsers never send to a server. When a burn link is opened, the encrypted data is deleted.
 - Pair a phone and a computer once, then send to one or several paired devices in one tap.
+- Live transfer: files too big for a link (up to 5 GB) are sent in encrypted parts while both devices have Ashdrop open. The server relays each part and deletes it, so the file is never stored.
 - Nearby: devices on the same Wi-Fi send files directly, encrypted, with no size limit.
 - A 4-word code can open a link on a device without a camera.
 - Optional account with an encrypted vault for files and your sent links (invite-only during the beta). Zero-knowledge: unlocked with a password, PIN or passkey in the browser.

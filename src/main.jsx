@@ -9,6 +9,7 @@ import './styles.css';
 import App, { RecipientPage, CodePage, PairPage } from './App.jsx';
 import { LegalPage } from './Legal.jsx';
 import { TouchLab } from './TouchLab.jsx';
+import { LivePage } from './LivePage.jsx';
 
 // Apply the saved theme before first paint so the recipient page matches too.
 try {
@@ -33,10 +34,21 @@ if (IOS) {
 
 const root = createRoot(document.getElementById('root'));
 const match = location.pathname.match(/^\/p\/([a-z2-9]{10})\/?$/);
+const liveMatch = location.pathname.match(/^\/s\/([a-hjkmnp-z2-9]{10})\/?$/);
 const legal = location.pathname.match(/^\/(terms|privacy|security|contact)\/?$/);
 
 if (legal) {
   root.render(<LegalPage page={legal[1]} />);
+} else if (liveMatch) {
+  // A live transfer. As with links: take the key out of the address bar and keep it for this tab only.
+  const id = liveMatch[1];
+  let key = decodeURIComponent(location.hash.slice(1));
+  try {
+    if (key) sessionStorage.setItem(`ashdrop.lk.${id}`, key);
+    else key = sessionStorage.getItem(`ashdrop.lk.${id}`) || '';
+  } catch {}
+  if (location.hash) history.replaceState(null, '', location.pathname);
+  root.render(<LivePage id={id} keyStr={key} />);
 } else if (/^\/lab\/touch\/?$/.test(location.pathname)) {
   root.render(<TouchLab />);
 } else if (/^\/code\/?$/.test(location.pathname)) {

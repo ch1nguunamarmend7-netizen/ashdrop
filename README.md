@@ -11,6 +11,7 @@
 - **Paste or drop, then Create link.** Text, passwords, code, or up to 25 MB of files. The link is copied for you.
 - **Burns after one view**, or expires after 1 or 24 hours. Add a password, and wrong guesses destroy the link.
 - **Can't scan a QR code?** Get 4 words to type on the other device instead.
+- **Live transfer:** files too big for a link (up to 5 GB) go across in encrypted parts while both devices have Ashdrop open. The server relays each part and deletes it, so the file is never stored.
 - **Nearby:** send files straight between devices on the same Wi-Fi. Nothing is uploaded and there is no size limit.
 - **Your devices:** pair your phone and computer once, then send to them with one tap.
 - **Vault** (invite-only beta): encrypted file storage you unlock with a password, PIN or passkey.

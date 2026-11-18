@@ -5,6 +5,7 @@
 import { LinkDO, json, sha256b64, bytesToB64url } from './link.js';
 import { UserDO, handleAccount, handleVault, countStat, call as callUser, indexStub } from './vault.js';
 import { handleOAuth } from './oauth.js';
+import { handleStream } from './stream.js';
 export { LinkDO, UserDO };
 
 const MAX_BODY = 26 * 1024 * 1024;             // 25 MB free-tier file + small header + GCM tags
@@ -68,10 +69,10 @@ export default {
       // Static site. /p/:id falls through to index.html (single-page app), which reads the key from the fragment.
       res = await env.ASSETS.fetch(request);
       res = new Response(res.body, res);
-      if (url.pathname.startsWith('/p/')) res.headers.set('Cache-Control', 'no-store');
+      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/s/')) res.headers.set('Cache-Control', 'no-store');
       if (url.pathname === '/build.json') res.headers.set('Cache-Control', 'no-cache');
       // Secret links and the code page are never meant for search engines (robots.txt says so too).
-      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair') || url.pathname.startsWith('/lab')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
+      if (url.pathname.startsWith('/p/') || url.pathname.startsWith('/s/') || url.pathname.startsWith('/code') || url.pathname.startsWith('/pair') || url.pathname.startsWith('/lab')) res.headers.set('X-Robots-Tag', 'noindex, nofollow');
     }
     for (const [k, v] of Object.entries(SECURITY_HEADERS)) res.headers.set(k, v);
     // Some browsers (Safari) do not count wss:// to the same host as 'self', so name it for live connections.
@@ -111,6 +112,7 @@ async function handleApi(request, env, url, ctx) {
   if (parts[1] === 'vault') return handleVault(request, env, url, parts);
   if (parts[1] === 'oauth') return handleOAuth(request, env, url, parts, { allowed, isSiteOwner });
   if (parts[1] === 'pair' && parts.length === 2 && request.method === 'POST') return pairDevices(request, env);
+  if (parts[1] === 's') return handleStream(request, env, parts, { allowed, ctx });
   if (parts[1] === 'code' && parts.length === 2 && request.method === 'POST') return lookupCode(request, env);
   if (parts[1] !== 'p') return json({ error: 'not_found' }, 404);
 

@@ -2,6 +2,8 @@
 // time, so the attempt counter and the burn are atomic: two guesses can never land at once,
 // and a burn link can never be opened twice.
 
+import { streamRoute, streamAlarm } from './stream.js';
+
 const TOMBSTONE_MS = 7 * 24 * 3600e3; // keep "burned/revoked/expired" status for the sender's My links view
 const blobKey = (id) => `p/${id}`;
 const NEARBY_MAX = 50;                        // devices in one network's room
@@ -50,6 +52,8 @@ export class LinkDO {
       case '/pair': return this.pair(body);
       case '/salt': return this.salt(body);
       case '/quota': return this.quota(body);
+      // Live transfers ("send in parts"): see stream.js.
+      case '/stream': return streamRoute(this, body);
       default: return json({ error: 'not_found' }, 404);
     }
   }
@@ -390,6 +394,8 @@ export class LinkDO {
   }
 
   async runAlarm() {
+    const stream = await this.state.storage.get('stream');
+    if (stream) return streamAlarm(this, stream);
     if (await this.state.storage.get('inbox')) {
       const inbox = await this.state.storage.get('inbox');
       if (Date.now() >= inbox.deleteAt) { await this.state.storage.deleteAll(); return; }

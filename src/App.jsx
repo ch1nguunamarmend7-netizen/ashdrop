@@ -12,6 +12,7 @@ import * as account from './lib/account.js';
 import * as vault from './lib/vault.js';
 import { getDevice, hasDevice, renameDevice, defaultDeviceName, getPeers, removePeer, startPairing, joinPairing, cancelPairing, sendToPeer, listenInbox, ackInbox, hasPendingPairing, touchSignal } from './lib/devices.js';
 import { watchTouch, askMotion, motionSupported } from './lib/touch.js';
+import { startLive, LIVE_MAX } from './lib/live.js';
 import * as linkStore from './lib/linkStore.js';
 import * as myLinks from './lib/myLinks.js';
 import { Footer } from './Legal.jsx';
@@ -471,6 +472,94 @@ function SendToDevices({ result, onPair }) {
         </div>
       )}
       {Object.values(status).filter(v => v && !['sending', 'sent'].includes(v)).map((m, i) => <div key={i} role="alert" className="mt-2 text-[12.5px] text-warn">{m}</div>)}
+    </div>
+  );
+}
+
+/* Live transfer, sender side. */
+const livePct = (st) => (st?.total ? Math.round((Math.min(st.sent, st.total) / st.total) * 100) : 0);
+const liveLine = (live) => {
+  const st = live.status || {};
+  if (st.phase === 'done') return 'Delivered. Nothing is left on the server.';
+  if (st.phase === 'cancelled') return st.message || 'Cancelled. Nothing is left on the server.';
+  if (st.phase === 'error') return st.message || 'The transfer stopped.';
+  if (!st.claimed) return live.to ? `Waiting for ${live.to} to open it…` : 'Waiting for the other device to open the link…';
+  return `Sending… ${livePct(st)}% of ${fmtBytes(live.size)}`;
+};
+function LiveBar({ live }) {
+  const st = live.status || {};
+  const end = ['done', 'cancelled', 'error'].includes(st.phase);
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
+        <div className={`h-full rounded-full transition-all duration-300 ${st.phase === 'done' ? 'bg-ok' : st.phase === 'cancelled' || st.phase === 'error' ? 'bg-mute' : 'bg-ember'} ${!end && !st.claimed ? 'animate-pulse' : ''}`}
+          style={{ width: `${st.phase === 'done' ? 100 : !st.claimed && !end ? 100 : livePct(st)}%`, opacity: !st.claimed && !end ? 0.35 : 1 }} />
+      </div>
+      <div id="live-status" data-phase={st.phase || ''} className={`text-[12.5px] ${st.phase === 'done' ? 'text-ok' : st.phase === 'error' ? 'text-warn' : 'text-mute'}`} role="status">{liveLine(live)}</div>
+    </div>
+  );
+}
+function LiveModal({ live, onClose, onCancel, onDismiss }) {
+  const [copied, setCopied] = useState(false);
+  const [showQr, setShowQr] = useState(false);
+  const link = `${location.origin}/s/${live.id}#${live.keyStr}`;
+  const copy = async () => { try { await navigator.clipboard.writeText(link); setCopied(true); setTimeout(() => setCopied(false), 2000); } catch {} };
+  useEffect(() => { navigator.clipboard?.writeText(link).then(() => setCopied('auto'), () => {}); }, []);
+  const canShare = typeof navigator.share === 'function';
+  const st = live.status || {};
+  const end = ['done', 'cancelled', 'error'].includes(st.phase);
+  return (
+    <Modal onClose={onClose} labelledBy="live-title">
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <div className="label text-ember flex items-center gap-1.5"><span className="touch-dot touch-dot-live" aria-hidden="true" />Live transfer · {fmtBytes(live.size)}</div>
+          <h2 id="live-title" className="font-display text-2xl font-bold mt-1">{end ? (st.phase === 'done' ? 'Delivered' : 'Transfer ended') : 'Send this link to the other device'}</h2>
+          <p className="text-[13px] text-mute mt-1 truncate">{live.label}</p>
+        </div>
+        <CloseBtn className="text-mute hover:text-fg p-1 -m-1" />
+      </div>
+      {!end && <div className="mt-4 rounded-xl bg-well border border-line p-3 flex flex-col gap-3">
+        <div className="font-mono text-[12.5px] break-all leading-relaxed min-w-0"><span className="text-mute">{location.protocol}//</span><span>{location.host}/s/{live.id}</span><span className="text-cyan">#{live.keyStr}</span></div>
+        <div className="flex gap-2">
+          <button id="live-copy" onClick={copy} className={`press flex-1 rounded-lg py-2.5 font-semibold transition-colors ${copied === true ? 'bg-ok text-ink' : 'btn-primary'}`}>{copied === true ? 'Copied to clipboard' : copied === 'auto' ? 'Copied · copy again' : 'Copy link'}</button>
+          {canShare && <button onClick={() => navigator.share({ title: 'Ashdrop', text: 'A live transfer with Ashdrop. Open it while I keep my tab open.', url: link }).catch(() => {})} className="press shrink-0 rounded-lg px-4 font-semibold border border-line hover:border-mute">Share</button>}
+          <button id="live-qr" onClick={() => setShowQr(v => !v)} aria-expanded={showQr} className={`press shrink-0 rounded-lg px-3 border transition-colors ${showQr ? 'border-cyan text-cyan' : 'border-line text-mute hover:text-fg'}`}>QR</button>
+        </div>
+        {showQr && <div className="pop flex flex-col items-center gap-2 pt-1"><QR text={link} size={200} /><div className="text-[12px] text-mute text-center">Scan with the other device's camera.</div></div>}
+      </div>}
+      <div className="mt-4"><LiveBar live={live} /></div>
+      {!end && (
+        <div className="mt-4 rounded-xl p-3.5 flex gap-3 bg-[var(--ember-soft)] border border-ember/50">
+          <span className="mt-0.5 shrink-0 text-ember">{FLAME_ICON}</span>
+          <div className="text-[13px]">
+            <div className="font-semibold">Keep this tab open until it arrives</div>
+            <div className="text-mute">The file goes across in encrypted parts. The server passes each part on and deletes it, so the whole file is never stored. Only one device can receive it. You can close this window; the transfer keeps going while the tab stays open.</div>
+          </div>
+        </div>
+      )}
+      <div className="mt-4 flex gap-2 justify-end">
+        {!end && <button id="live-cancel" onClick={onCancel} className="press rounded-lg px-3.5 py-2 text-[13px] font-semibold border border-line hover:border-ember hover:text-ember">Cancel transfer</button>}
+        <button id="live-done" onClick={end ? onDismiss : onClose} className="press rounded-lg px-4 py-2 text-[13px] font-semibold btn-primary">{end ? 'Done' : 'Hide'}</button>
+      </div>
+    </Modal>
+  );
+}
+/* A small status that stays on screen while a live transfer runs and its window is closed. */
+function LivePill({ live, onOpen, onDismiss }) {
+  const st = live.status || {};
+  const end = ['done', 'cancelled', 'error'].includes(st.phase);
+  return (
+    <div id="live-pill" className="fixed z-[64] left-4 right-4 sm:left-auto sm:w-[360px] pop" style={{ bottom: 'calc(16px + env(safe-area-inset-bottom, 0px))' }}>
+      <div className="rounded-xl border border-line bg-panel p-3.5 shadow-2xl flex flex-col gap-2">
+        <div className="flex items-center gap-2">
+          <span className={`touch-dot ${end ? '' : 'touch-dot-live'} shrink-0`} aria-hidden="true" />
+          <span className="text-[13px] font-semibold truncate flex-1">{live.label}</span>
+          {end ? <button onClick={onDismiss} aria-label="Dismiss" className="text-mute hover:text-fg text-[15px] leading-none">×</button>
+            : <button id="live-pill-open" onClick={onOpen} className="text-[12.5px] text-mute hover:text-fg shrink-0">Details</button>}
+        </div>
+        <LiveBar live={live} />
+        {!end && <div className="text-[11.5px] text-mute">Keep this tab open until it arrives.</div>}
+      </div>
     </div>
   );
 }
@@ -1414,7 +1503,7 @@ function OwnerStats() {
     rows.push(days?.find(d => d.day === day) || { day });
   }
   const sum = (k) => rows.reduce((n, r) => n + (r[k] || 0), 0);
-  const cols = [['created', 'Links made'], ['opened', 'Opened'], ['paired', 'Pairings'], ['signup', 'Accounts'], ['created_owner', 'Yours']];
+  const cols = [['created', 'Links made'], ['opened', 'Opened'], ['live_done', 'Live sent'], ['paired', 'Pairings'], ['signup', 'Accounts'], ['created_owner', 'Yours']];
   return (
     <Row stack title="Usage" sub="Real use, counted on the server: a bot does not make or open links. Only a number per day is kept, nothing about who. Your own links (with the owner key) are counted apart under Yours. Days are in UTC.">
       {err ? <div className="text-[12.5px] text-warn">{err}</div> : !days ? <div className="text-[12.5px] text-mute">Loading…</div> : (
@@ -2810,7 +2899,7 @@ function HomeInfo({ onHow }) {
     ['Can Ashdrop read what I send?', 'No. Your text and files are encrypted on your device before upload, and the key never reaches our servers.'],
     ['What happens after a link is opened?', 'A burn-after-reading link is deleted from the server the moment it is opened. Anyone who opens it afterwards sees that it is gone.'],
     ['Do I need an account or an app?', 'No. Ashdrop works in any modern browser on phones and computers. An account is only for the optional encrypted vault.'],
-    ['How big can files be?', 'Up to 25 MB per link. Nearby, for devices on the same Wi-Fi, has no size limit.'],
+    ['How big can files be?', 'Up to 25 MB per link. Bigger files, up to 5 GB, go as a live transfer: sent in encrypted parts while both devices have Ashdrop open, and never stored on the server. Nearby, for devices on the same Wi-Fi, has no size limit.'],
   ];
   return (
     <section id="about" aria-labelledby="about-title" className="mt-14 border-t border-line pt-10 flex flex-col gap-8">
@@ -3477,13 +3566,23 @@ function App() {
       setArrival({ item: items[items.length - 1], more: items.length - 1 });
     });
   }, [peersVersion, pairOpen]); // re-check after the pairing window closes: a pairing may still be waiting
-  const openInboxItem = (it) => { setArrival(null); setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); setRecipientOf({ id: it.id, keyStr: it.keyStr }); };
+  const openInboxItem = (it) => {
+    setArrival(null); setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]);
+    if (it.live) { // a live transfer has its own page; hand the key over like a link does, never in the address
+      try { sessionStorage.setItem(`ashdrop.lk.${it.id}`, it.keyStr); } catch {}
+      location.assign(`/s/${it.id}`);
+      return;
+    }
+    setRecipientOf({ id: it.id, keyStr: it.keyStr });
+  };
   const dismissInboxItem = (it) => { setInbox(prev => prev.filter(p => p.msgId !== it.msgId)); ackInbox([it.msgId]); };
   const [progress, setProgress] = useState(null); // upload progress 0..1 while a big link is sent
   // Site owner mode: bigger links and 7-day expiry, unlocked by the owner key saved in Settings.
   const [ownerOn, setOwnerOn] = useState(() => !!getOwnerKey());
   const maxTotal = ownerOn ? OWNER_MAX_TOTAL : MAX_TOTAL;
   const limitLabel = ownerOn ? '95 MB' : '25 MB';
+  // Bigger than a link can hold: it goes as a live transfer (sent in parts, not stored). See lib/live.js.
+  const isLive = files.length > 0 && filesSize > maxTotal;
   const [pw, setPw] = useState('');
   const [maxAttempts, setMaxAttempts] = useState(() => loadSettings().defaultAttempts);
   const [recipientOf, setRecipientOf] = useState(null);
@@ -3607,18 +3706,18 @@ function App() {
   const startOver = () => { setText(''); setFile(null); setLang('Plain text'); setLangPicked(false); setOptsOpen(false); setPw(''); setPwOn(settings.defaultPw); setExpiry(settings.defaultExpiry); setMaxAttempts(settings.defaultAttempts); setQrOnly(false); setCodeOn(false); setErr(''); };
 
   useEffect(() => { if (!ownerOn && expiry === '7d') setExpiry('24h'); }, [ownerOn, expiry]);
-  // Add files to the list. Everything together must stay under the limit (25 MB, or 95 MB for the site owner).
+  // Add files to the list. Up to 25 MB (95 MB for the site owner) becomes a link; more than that, up to 5 GB, a live transfer.
   const addFiles = (list) => {
     const incoming = Array.from(list || []).filter(f => !files.some(g => g.name === f.name && g.size === f.size && g.lastModified === f.lastModified));
     if (!incoming.length) return;
     let next = [...files], skipped = [];
     for (const f of incoming) {
       if (next.length >= MAX_FILES) { skipped.push(`${f.name} (limit of ${MAX_FILES} files)`); continue; }
-      if (next.reduce((n, g) => n + g.size, 0) + f.size > maxTotal) { skipped.push(`${f.name} (${fmtBytes(f.size)})`); continue; }
+      if (next.reduce((n, g) => n + g.size, 0) + f.size > LIVE_MAX) { skipped.push(`${f.name} (${fmtBytes(f.size)})`); continue; }
       next.push(f);
     }
     setFiles(next);
-    setErr(skipped.length ? `Not added, it would go over ${limitLabel} in total: ${skipped.join(', ')}.` : '');
+    setErr(skipped.length ? `Not added, it would go over 5 GB in total: ${skipped.join(', ')}.` : '');
   };
   const removeFile = (i) => { setFiles(fs => fs.filter((_, j) => j !== i)); setErr(''); };
 
@@ -3646,10 +3745,43 @@ function App() {
   const [sendingTo, setSendingTo] = useState(null);
   // to: nothing (show the link), one paired device, or several. Several devices each get their own copy,
   // sealed with its own key, so a burn-after-reading link burns separately on every device.
+  // Live transfer: files too big for a link go to one other device in parts, through the server but never stored on it.
+  const [live, setLive] = useState(null); // { id, keyStr, label, size, to, status: { phase, sent, total, claimed, message }, cancel }
+  const [liveOpen, setLiveOpen] = useState(false);
+  const liveBusy = !!live && ['waiting', 'sending', undefined].includes(live.status?.phase);
+  useEffect(() => { // leaving would stop the transfer: ask first
+    if (!liveBusy) return;
+    const warn = (e) => { e.preventDefault(); e.returnValue = ''; };
+    window.addEventListener('beforeunload', warn);
+    return () => window.removeEventListener('beforeunload', warn);
+  }, [liveBusy]);
+  const sendLive = async (targets) => {
+    if (liveBusy) return setErr('A live transfer is already running. Wait for it to finish, or cancel it first.');
+    if (targets.length > 1) return setErr('A live transfer goes to one device at a time. Pick one device.');
+    if (!crypto?.subtle) return setErr('This browser does not expose Web Crypto here. Open the page over HTTPS.');
+    setBusy(true);
+    try {
+      const label = files.length > 1 ? `${files.length} files: ${files.map(f => f.name).join(', ')}`.slice(0, 80) : files[0].name;
+      setLive({ label, size: filesSize, status: { phase: 'waiting', sent: 0, total: 1 } });
+      const h = await startLive(files, { onStatus: (st) => setLive(l => (l ? { ...l, status: st } : l)) });
+      const peer = targets[0] || null;
+      setLive(l => ({ ...(l || {}), id: h.id, keyStr: h.keyStr, label, size: h.size, to: peer?.name || null, cancel: h.cancel }));
+      if (peer) {
+        try {
+          await sendToPeer(peer, { id: h.id, keyStr: h.keyStr, label, kind: 'file', live: true, expiry: 'burn', expiresAt: Date.now() + 12 * 3600e3 });
+          toast(`Sending live to ${peer.name}. Keep this tab open until it arrives.`);
+        } catch (e) { toast(`Could not reach ${peer.name} (${e.message}). Here is the link instead.`); setLiveOpen(true); }
+      } else setLiveOpen(true);
+      startOver();
+    } catch (e) { setLive(null); setErr(e.message); }
+    finally { setBusy(false); }
+  };
+
   const create = async (to = null, { touch = false } = {}) => {
     const targets = Array.isArray(to) ? to.filter(p => p?.inboxId) : to?.inboxId ? [to] : [];
     setErr('');
     if (!hasContent) return setErr('Paste or type something first, or drop files anywhere on the page.');
+    if (isLive) return sendLive(targets);
     if (pwOn && pw.length < 6) return setErr('Use a password of at least 6 characters, or turn the password off.');
     if (!crypto?.subtle) return setErr('This browser does not expose Web Crypto here. Open the page over HTTPS.');
     setBusy(true);
@@ -3842,7 +3974,7 @@ function App() {
                               </svg>
                             </div>
                             <div className="font-display text-[20px] font-bold">Paste or type here</div>
-                            <div className="text-mute text-[13px] max-w-xs">A password, a message, notes or code. Or drop files anywhere on this page, up to {limitLabel} in total.</div>
+                            <div className="text-mute text-[13px] max-w-xs">A password, a message, notes or code. Or drop files anywhere on this page. Up to {limitLabel} becomes a link; bigger files, up to 5 GB, are sent live.</div>
                             <div className="flex items-center gap-1.5 text-[11.5px] text-ok mt-1"><span className="w-1.5 h-1.5 rounded-full bg-ok" aria-hidden="true" />Encrypted in this tab before anything is sent</div>
                           </div>
                         </div>
@@ -3889,12 +4021,13 @@ function App() {
                           </ul>
                           <div>
                             <div className="flex justify-between text-[11.5px] text-mute tabular mb-1.5">
-                              <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)} of {limitLabel}</span>
+                              <span id="files-total">{files.length} file{files.length === 1 ? '' : 's'} · {fmtBytes(filesSize)}{isLive ? ' · live transfer' : ` of ${limitLabel}`}</span>
                               <button id="remove-all" onClick={() => setFiles([])} className="hover:text-ember transition-colors">{text.trim() ? 'Remove all, back to text' : 'Remove all'}</button>
                             </div>
                             <div className="h-1.5 rounded-full bg-line overflow-hidden" aria-hidden="true">
-                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / maxTotal * 100)}%`, background: filesSize / maxTotal > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
+                              <div className="h-full rounded-full transition-all duration-500" style={{ width: `${Math.min(100, filesSize / maxTotal * 100)}%`, background: isLive ? 'var(--ember)' : filesSize / maxTotal > 0.9 ? 'var(--warn)' : 'var(--grad-cool)' }} />
                             </div>
+                            {isLive && <p id="live-note" className="text-[12.5px] text-mute mt-2"><span className="text-fg font-semibold">Too big for a link, so it is sent live.</span> It goes to the other device in encrypted parts while both of you have Ashdrop open. Nothing is kept on the server. Keep this tab open until it arrives.</p>}
                           </div>
                         </>
                       )}
@@ -3937,7 +4070,7 @@ function App() {
                   );
                 })()}
 
-                <div className="rounded-2xl border border-line bg-panel">
+                {!isLive && <div className="rounded-2xl border border-line bg-panel">
                   <button id="options-toggle" onClick={() => setOptsOpen(o => !o)} aria-expanded={optsOpen}
                     className="w-full flex items-center gap-3 px-4 py-3 text-left">
                     <span className="label shrink-0">Options</span>
@@ -4024,15 +4157,15 @@ function App() {
                 </div>
 
                   </div>}
-                </div>
+                </div>}
 
                 {err && <div className="rounded-xl border border-warn/50 bg-warn/10 text-warn text-[12.5px] px-3 py-2.5" role="alert">{err}</div>}
 
                 <button id="create" onClick={() => create()} disabled={busy}
                   className={`press rounded-xl py-3.5 px-5 font-display font-bold text-[17px] transition flex items-center justify-center gap-2 ${hasContent ? 'btn-burn ember-glow hover:brightness-110' : 'bg-panel text-mute border border-line'} ${busy ? 'shimmer' : ''}`}>
-                  {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : 'Encrypting…'}</> : 'Create link'}
+                  {busy ? <><span className="w-4 h-4 rounded-full border-2 border-[#111317] border-t-transparent animate-spin" />{progress !== null ? `Uploading ${Math.round(progress * 100)}%` : isLive ? 'Starting…' : 'Encrypting…'}</> : isLive ? 'Start live transfer' : 'Create link'}
                 </button>
-                {!qrOnly && hasContent && <TouchSend peersVersion={peersVersion} disabled={busy} onSend={(p) => create(p, { touch: true })} />}
+                {!qrOnly && hasContent && !isLive && <TouchSend peersVersion={peersVersion} disabled={busy} onSend={(p) => create(p, { touch: true })} />}
                 {!qrOnly && <DeviceRow peersVersion={peersVersion} onPair={() => setPairOpen(true)} onSend={(p) => create(p)} sendingTo={sendingTo} disabled={busy} />}
                 <p className="text-[12.5px] text-mute text-center">
                   <a id="have-code" href="/code" className="text-fg underline underline-offset-2 hover:text-ember">Got a 4-word code?</a>
@@ -4059,6 +4192,8 @@ function App() {
         onClose={() => { setResult(null); startOver(); }}
         onOpenRecipient={() => { setRecipientOf({ id: result.id, keyStr: result.keyStr }); setResult(null); startOver(); }} />}
       {pairOpen && <PairModal onClose={() => setPairOpen(false)} onPaired={() => setPeersVersion(v => v + 1)} />}
+      {live?.id && liveOpen && <LiveModal live={live} onClose={() => setLiveOpen(false)} onCancel={async () => { await live.cancel?.(); }} onDismiss={() => { setLiveOpen(false); setLive(null); }} />}
+      {live && !liveOpen && <LivePill live={live} onOpen={() => (live.id ? setLiveOpen(true) : null)} onDismiss={() => setLive(null)} />}
       {touchTarget && !recipientOf && <TouchTarget name={touchTarget.fromName} onClose={() => setTouchTarget(null)} />}
       {arrival && !recipientOf && <ArrivalCard item={arrival.item} more={arrival.more} onOpen={() => openInboxItem(arrival.item)} onLater={() => setArrival(null)} />}
       {recipientOf && <RecipientPage key={recipientOf.id} id={recipientOf.id} keyStr={recipientOf.keyStr} onExit={() => setRecipientOf(null)} />}
