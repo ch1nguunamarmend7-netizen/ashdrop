@@ -3405,7 +3405,10 @@ const extOf = (l) => (FORMATS.find(f => f.id === l) || FORMATS[0]).ext;
 
 
 function App() {
-  const [view, setView] = useState(() => (/^\/nearby\/?$/.test(location.pathname) ? 'nearby' : /^\/vault\/?$/.test(location.pathname) ? 'vault' : 'share'));
+  // Each screen has its own address (/nearby, /vault, /vault/links, /settings, /how), so a refresh stays put
+  // and the browser's Back button works. Share is "/".
+  const viewFromPath = (p = location.pathname) => (/^\/nearby\/?$/.test(p) ? 'nearby' : /^\/vault(\/links)?\/?$/.test(p) ? 'vault' : /^\/settings\/?$/.test(p) ? 'settings' : /^\/how\/?$/.test(p) ? 'how' : 'share');
+  const [view, setView] = useState(() => viewFromPath());
   const [text, setText] = useState('');
   const [lang, setLang] = useState('Plain text');
   const [langPicked, setLangPicked] = useState(false); // once chosen by hand, stop guessing
@@ -3494,8 +3497,17 @@ function App() {
   const [folders, setFolders] = useState(savedFolders?.list || []);
   const [folderColors, setFolderColors] = useState(savedFolders?.colors || {});
   useEffect(() => { try { localStorage.setItem('ashdrop.folders.v2', JSON.stringify({ list: folders, colors: folderColors })); } catch {} }, [folders, folderColors]);
-  const [vaultTabState, setVaultTab] = useState(() => (account.session() || /^\/vault\/?$/.test(location.pathname) ? 'files' : 'links'));
+  const [vaultTabState, setVaultTab] = useState(() => (/^\/vault\/links\/?$/.test(location.pathname) ? 'links' : account.session() || /^\/vault\/?$/.test(location.pathname) ? 'files' : 'links'));
   const vaultTab = FEATURES.vaultFiles || FEATURES.cloudVault ? vaultTabState : 'links';
+  useEffect(() => { // keep the address in step with the screen
+    const path = view === 'share' ? '/' : view === 'vault' ? (vaultTab === 'links' ? '/vault/links' : '/vault') : '/' + view;
+    if (location.pathname !== path) history.pushState(null, '', path + location.search);
+  }, [view, vaultTab]);
+  useEffect(() => { // Back and Forward
+    const onPop = () => { const v = viewFromPath(); setView(v); if (v === 'vault') setVaultTab(/^\/vault\/links/.test(location.pathname) ? 'links' : 'files'); };
+    window.addEventListener('popstate', onPop);
+    return () => window.removeEventListener('popstate', onPop);
+  }, []);
   // Links you sent, kept on this device only (they include each link's key and owner token).
   // With the passcode lock on they are encrypted at rest and only decrypted in memory after unlocking.
   const [lockOn, setLockOn] = useState(linkStore.hasLock);
@@ -3702,7 +3714,7 @@ function App() {
       {/* header */}
       <header className="sticky z-40 bg-ink/95 backdrop-blur-sm border-b border-line" style={{ top: 'env(safe-area-inset-top, 0px)' }}>
         <div className="gutter max-w-6xl mx-auto py-3 flex items-center gap-1.5 sm:gap-3">
-          <button onClick={() => { setView('share'); }} aria-label="Ashdrop home" className="shrink-0"><Logo /></button>
+          <button id="nav-home" onClick={() => { setView('share'); setRecipientOf(null); window.scrollTo?.({ top: 0 }); }} aria-label="Ashdrop home" className="shrink-0"><Logo /></button>
           {ownerOn && <span id="owner-chip" title="Owner key active on this device: links up to 95 MB, 7-day expiry" style={{ '--t1': 'var(--gold)' }} className="tone-chip hidden sm:inline-flex border rounded-full px-2 py-0.5 text-[11px] font-semibold">Owner</span>}
           <nav className="flex-1 sm:flex-none sm:mx-auto min-w-0" aria-label="Sections">
             <div className="relative grid grid-cols-3 gap-1 p-1 rounded-xl bg-panel border border-line w-full sm:w-max">
